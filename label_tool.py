@@ -763,6 +763,14 @@ class AppWindow:
             json_6d_path = os.path.join(self.scenes.scenes_path, f"{self._annotation_scene.scene_num:06}",
                                         "scene_gt.json")
             with open(json_6d_path, "r") as gt_scene:
+                # wait dialog
+                temp_dlg = gui.Dialog('Wait')
+                temp_em = self.window.theme.font_size
+                temp_dlg_layout = gui.Vert(temp_em, gui.Margins(temp_em, temp_em, temp_em, temp_em))
+                temp_dlg_layout.add_child(gui.Label('Processing, please wait'))
+                temp_dlg.add_child(temp_dlg_layout)
+                self.window.show_dialog(temp_dlg)
+
                 gt_6d_pose_data = json.load(gt_scene)
                 first_frame_gt_6d_pose = gt_6d_pose_data['0']
                 T = camera_pose.compute_camera_pose(self.scenes.scenes_path, self.scenes.scenes_path + '/intrinsics'
@@ -807,6 +815,8 @@ class AppWindow:
                         self._meshes_used.selected_index = len(meshes) - 1
 
                     self._on_generate()
+
+                self.window.close_dialog()
 
 
         else:
