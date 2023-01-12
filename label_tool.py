@@ -782,7 +782,7 @@ class AppWindow:
                         obj_transform = np.concatenate((obj_R.reshape((3, 3)), obj_t.reshape(3, 1)), axis=1)
                         obj_transform = np.concatenate((obj_transform, np.array([0, 0, 0, 1]).reshape(1, 4)))
                         # Transform mesh with camera_T
-                        obj_transform = np.matmul(T[current_image_index], obj_transform)
+                        obj_transform = np.matmul(T[current_image_index], obj_transform)  # 存疑
                         # Add mesh
                         meshes = self._annotation_scene.get_objects()
                         meshes = [i.obj_name for i in meshes]
