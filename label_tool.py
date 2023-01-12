@@ -20,15 +20,16 @@ import os
 import json
 import cv2
 import warnings
+import camera_pose
 
 # PARAMETERS.
 ################################################################################
 p = {
     # Folder containing the BOP datasets.
-    'dataset_path': '/path/to/dataset',
+    'dataset_path': '/media/r/T7 Shield/lm',
 
     # Dataset split. Options: 'train', 'test'.
-    'dataset_split': 'val',
+    'dataset_split': 'test',
 
     # Dataset split type. Options: 'synt', 'real', None = default. See dataset_params.py for options.
     'dataset_split_type': None,
@@ -247,11 +248,11 @@ class AppWindow:
         self._scene_control.add_child(self._view_numbers)
 
         self._settings_panel.add_child(self._scene_control)
-        refine_position = gui.Button("Refine position")
-        refine_position.set_on_clicked(self._on_refine)
+        auto_label = gui.Button("Auto Label")
+        auto_label.set_on_clicked(self._auto_label)
         generate_save_annotation = gui.Button("generate annotation - save/update")
         generate_save_annotation.set_on_clicked(self._on_generate)
-        self._scene_control.add_child(refine_position)
+        self._scene_control.add_child(auto_label)
         self._scene_control.add_child(generate_save_annotation)
 
         # ---- Menu ----
@@ -278,7 +279,7 @@ class AppWindow:
 
         self._apply_settings()
 
-        self._annotation_scene = None
+        self._annotation_scene = None  # The frame currently being annotated
 
         # set callbacks for key control
         self._scene.set_on_key(self._transform)
@@ -747,9 +748,73 @@ class AppWindow:
             return
         self.scene_load(self.scenes.scenes_path, self._annotation_scene.scene_num, self._annotation_scene.image_num - 1)
 
+    def _check_first_frame_labeled(self):
+        json_6d_path = os.path.join(self.scenes.scenes_path, f"{self._annotation_scene.scene_num:06}", "scene_gt.json")
+
+        if os.path.exists(json_6d_path):
+            with open(json_6d_path, "r") as gt_scene:
+                gt_6d_pose_data = json.load(gt_scene)
+        else:
+            return False
+        return '0' in gt_6d_pose_data.keys()
+
+    def _auto_label(self):
+        if self._check_first_frame_labeled():
+            json_6d_path = os.path.join(self.scenes.scenes_path, f"{self._annotation_scene.scene_num:06}",
+                                        "scene_gt.json")
+            with open(json_6d_path, "r") as gt_scene:
+                gt_6d_pose_data = json.load(gt_scene)
+                first_frame_gt_6d_pose = gt_6d_pose_data['0']
+                T = camera_pose.compute_camera_pose(self.scenes.scenes_path, self.scenes.scenes_path + '/intrinsics'
+                                                                                                       '.json')
+                num = len(next(
+                    os.walk(os.path.join(self.scenes.scenes_path, f'{self._annotation_scene.scene_num:06}', 'depth')))[
+                              2])
+                for current_image_index in range(1, num):
+                    self.scene_load(self.scenes.scenes_path, self._annotation_scene.scene_num,
+                                    current_image_index)
+                    # add object (redundancy)
+                    for first_frame_obj_data in first_frame_gt_6d_pose:
+                        obj_index = first_frame_obj_data["obj_id"] - 1
+                        obj_R = np.array(np.array(first_frame_obj_data['cam_R_m2c']), dtype=np.float64)
+                        obj_t = np.array(np.array(first_frame_obj_data['cam_t_m2c']), dtype=np.float64) / 1000
+                        # convert to meter
+                        obj_transform = np.concatenate((obj_R.reshape((3, 3)), obj_t.reshape(3, 1)), axis=1)
+                        obj_transform = np.concatenate((obj_transform, np.array([0, 0, 0, 1]).reshape(1, 4)))
+                        # Transform mesh with camera_T
+                        obj_transform = np.matmul(T[current_image_index], obj_transform)
+                        # Add mesh
+                        meshes = self._annotation_scene.get_objects()
+                        meshes = [i.obj_name for i in meshes]
+                        object_geometry = o3d.io.read_point_cloud(
+                            self.scenes.objects_path + '/obj_' + f'{obj_index + 1:06}' + '.ply')
+                        object_geometry.points = o3d.utility.Vector3dVector(
+                            np.array(object_geometry.points) / 1000)  # convert mm to meter
+
+                        object_geometry.transform(obj_transform)
+                        obj_name = self.load_model_names()
+                        obj_name = obj_name[obj_index]
+                        new_mesh_instance = self._obj_instance_count(obj_name, meshes)
+                        new_mesh_name = str(obj_name) + '_' + str(new_mesh_instance)
+                        self._scene.scene.add_geometry(new_mesh_name, object_geometry,
+                                                       self.settings.annotation_obj_material,
+                                                       add_downsampled_copy_for_fast_rendering=True)
+                        self._annotation_scene.add_obj(object_geometry, new_mesh_name, new_mesh_instance,
+                                                       transform=obj_transform)
+                        meshes = self._annotation_scene.get_objects()  # update list after adding current object
+                        meshes = [i.obj_name for i in meshes]
+                        self._meshes_used.set_items(meshes)
+                        self._meshes_used.selected_index = len(meshes) - 1
+
+                    self._on_generate()
+
+
+        else:
+            self._on_error('The first frame is not labeled')
+            return
+
 
 def main():
-
     if p['dataset_split_type']:
         split_and_type = p['dataset_split'] + '_' + p['dataset_split_type']
     else:

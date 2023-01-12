@@ -14,16 +14,43 @@ import numpy as np
 import cv2
 import os
 import glob
-from utils.ply import Ply
-from utils.camera import *
-from registration import icp, feature_registration, match_ransac, rigid_transform_3D
+from utils import icp, feature_registration, match_ransac, rigid_transform_3D
 from tqdm import trange
 from pykdtree.kdtree import KDTree
 import time
 import sys
-from config.registrationParameters import *
 import json
 import png
+
+'''
+===============================================================================
+Define a set of parameters related to fragment registration
+===============================================================================
+'''
+# Voxel size used to down sample the raw pointcloud for faster ICP
+VOXEL_SIZE = 0.001
+
+# Set up parameters for post-processing
+# Voxel size for the complete mesh
+VOXEL_R = 0.0002
+
+# search for up to N frames for registration, odometry only N=1, all frames N = np.inf
+# for any N!= np.inf, the refinement is local
+K_NEIGHBORS = 10
+
+# Specify an icp algorithm
+# "colored-icp", as in Park, Q.-Y. Zhou, and V. Koltun, Colored Point Cloud Registration Revisited, ICCV, 2017 (slower)
+# "point-to-plane", a coarse to fine implementation of point-to-plane icp (faster)
+
+ICP_METHOD = "point-to-plane"
+
+# specify the frenquency of labeling ground truth pose
+
+LABEL_INTERVAL = 1
+
+# specify the frenquency of segments used in mesh reconstruction
+
+RECONSTRUCTION_INTERVAL = 10
 
 # Set up parameters for registration
 # voxel sizes use to down sample raw pointcloud for fast ICP
@@ -40,6 +67,43 @@ inlier_Radius = voxel_Radius * 2.5
 
 # search for up to N frames for registration, odometry only N=1, all frames N = np.inf
 N_Neighbours = K_NEIGHBORS
+
+
+def convert_depth_frame_to_pointcloud(depth_image, camera_intrinsics):
+    """
+    Convert the depthmap to a 3D point cloud
+    Parameters:
+    -----------
+    depth_frame : (m,n) uint16
+            The depth_frame containing the depth map
+
+    camera_intrinsics : dict
+            The intrinsic values of the depth imager in whose coordinate system the depth_frame is computed
+    Return:
+    ----------
+    pointcloud : (m,n,3) float
+            The corresponding pointcloud in meters
+
+    """
+
+    [height, width] = depth_image.shape
+
+    nx = np.linspace(0, width - 1, width)
+    ny = np.linspace(0, height - 1, height)
+    u, v = np.meshgrid(nx, ny)
+    x = (u.flatten() -
+         float(camera_intrinsics['ppx'])) / float(camera_intrinsics['fx'])
+    y = (v.flatten() -
+         float(camera_intrinsics['ppy'])) / float(camera_intrinsics['fy'])
+    depth_image = depth_image * float(camera_intrinsics['depth_scale'])
+    z = depth_image.flatten()
+    x = np.multiply(x, z)
+    y = np.multiply(y, z)
+
+    pointcloud = np.dstack((x, y, z)).reshape(
+        (depth_image.shape[0], depth_image.shape[1], 3))
+
+    return pointcloud
 
 
 def marker_registration(source, target):
@@ -90,63 +154,9 @@ def marker_registration(source, target):
         return None
 
 
-def post_process(originals, voxel_Radius, inlier_Radius):
-    """
-    Merge segments so that new points will not be add to the merged
-    model if within voxel_Radius to the existing points, and keep a vote
-    for if the point is issolated outside the radius of inlier_Radius at
-    the timeof the merge
-
-    Parameters
-    ----------
-    originals : List of open3d.Pointcloud classe
-      6D pontcloud of the segments transformed into the world frame
-    voxel_Radius : float
-      Reject duplicate point if the new point lies within the voxel radius
-      of the existing point
-    inlier_Radius : float
-      Point considered an outlier if more than inlier_Radius away from any
-      other points
-
-    Returns
-    ----------
-    points : (n,3) float
-      The (x,y,z) of the processed and filtered pointcloud
-    colors : (n,3) float
-      The (r,g,b) color information corresponding to the points
-    vote : (n, ) int
-      The number of vote (seen duplicate points within the voxel_radius) each
-      processed point has reveived
-    """
-
-    for point_id in trange(len(originals)):
-
-        if point_id == 0:
-            vote = np.zeros(len(originals[point_id].points))
-            points = np.array(originals[point_id].points, dtype=np.float64)
-            colors = np.array(originals[point_id].colors, dtype=np.float64)
-
-        else:
-
-            points_temp = np.array(originals[point_id].points, dtype=np.float64)
-            colors_temp = np.array(originals[point_id].colors, dtype=np.float64)
-
-            dist, index = nearest_neighbour(points_temp, points)
-            new_points = np.where(dist > voxel_Radius)
-            points_temp = points_temp[new_points]
-            colors_temp = colors_temp[new_points]
-            inliers = np.where(dist < inlier_Radius)
-            vote[(index[inliers],)] += 1
-            vote = np.concatenate([vote, np.zeros(len(points_temp))])
-            points = np.concatenate([points, points_temp])
-            colors = np.concatenate([colors, colors_temp])
-
-    return (points, colors, vote)
-
-
 def full_registration(path, max_correspondence_distance_coarse,
-                      max_correspondence_distance_fine):
-    global N_Neighbours, LABEL_INTERVAL, n_pcds
+                      max_correspondence_distance_fine, camera_intrinsics, n_pcds):
+    global N_Neighbours, LABEL_INTERVAL
     pose_graph = pipelines.registration.PoseGraph()
     odometry = np.identity(4)
     pose_graph.nodes.append(pipelines.registration.PoseGraphNode(odometry))
@@ -160,8 +170,8 @@ def full_registration(path, max_correspondence_distance_coarse,
                                max(1, int(n_pcds / N_Neighbours))):  # source_id是当前帧，target_id是目标帧
 
             # derive pairwise registration through feature matching
-            color_src, depth_src = load_images(path, source_id)
-            color_dst, depth_dst = load_images(path, target_id)
+            color_src, depth_src = load_images(path, source_id, camera_intrinsics)
+            color_dst, depth_dst = load_images(path, target_id, camera_intrinsics)
             res = marker_registration((color_src, depth_src),
                                       (color_dst, depth_dst))
 
@@ -170,9 +180,9 @@ def full_registration(path, max_correspondence_distance_coarse,
                 continue
 
             if not pcds[source_id]:
-                pcds[source_id] = load_pcd(path, source_id, downsample=True)
+                pcds[source_id] = load_pcd(path, source_id, camera_intrinsics, downsample=True)
             if not pcds[target_id]:
-                pcds[target_id] = load_pcd(path, target_id, downsample=True)
+                pcds[target_id] = load_pcd(path, target_id, camera_intrinsics, downsample=True)
             if res is None:
                 # if marker_registration fails, perform pointcloud matching
                 transformation_icp, information_icp = icp(
@@ -201,12 +211,11 @@ def full_registration(path, max_correspondence_distance_coarse,
     return pose_graph  # 返回的是一个位姿图（SLAM里的概念），位姿图的节点数就是拍摄的图片数，边就是各个节点之间的变换矩阵。这个方法不止与相邻帧建立变换矩阵，还与一些不相邻的帧建立了，可能这样会更精确。
 
 
-def load_images(path, ID):
+def load_images(path, ID, camera_intrinsics, ):
     """
     Load a color and a depth image by path and image ID
 
     """
-    global camera_intrinsics
 
     img_file = path + 'JPEGImages/%s.jpg' % (ID * LABEL_INTERVAL)
     cad = cv2.imread(img_file)
@@ -221,48 +230,13 @@ def load_images(path, ID):
     return (cad, pointcloud)
 
 
-def load_pcds(path, downsample=True, interval=1):
-    """
-    load pointcloud by path and down samle (if True) based on voxel_size
-
-    """
-
-    global voxel_size, camera_intrinsics
-    pcds = []
-
-    for Filename in range(len(glob.glob1(path + "JPEGImages", "*.jpg")) / interval):
-        img_file = path + 'JPEGImages/%s.jpg' % (Filename * interval)
-
-        cad = cv2.imread(img_file)
-        cad = cv2.cvtColor(cad, cv2.COLOR_BGR2RGB)
-        depth_file = path + 'depth/%s.png' % (Filename * interval)
-        reader = png.Reader(depth_file)
-        pngdata = reader.read()
-        # depth = np.vstack(map(np.uint16, pngdata[2]))
-        depth = np.array(tuple(map(np.uint16, pngdata[2])))
-        mask = depth.copy()
-        depth = convert_depth_frame_to_pointcloud(depth, camera_intrinsics)
-
-        source = open3d.geometry.PointCloud()
-        source.points = open3d.utility.Vector3dVector(depth[mask > 0])
-        source.colors = open3d.utility.Vector3dVector(cad[mask > 0])
-
-        if downsample == True:
-            pcd_down = source.voxel_down_sample(voxel_size=voxel_size)
-            pcd_down.estimate_normals(open3d.geometry.KDTreeSearchParamHybrid(radius=0.002 * 2, max_nn=30))
-            pcds.append(pcd_down)
-        else:
-            pcds.append(source)
-    return pcds
-
-
-def load_pcd(path, Filename, downsample=True, interval=1):
+def load_pcd(path, Filename, camera_intrinsics, downsample=True, interval=1):
     """
      load pointcloud by path and down samle (if True) based on voxel_size
 
      """
 
-    global voxel_size, camera_intrinsics
+    global voxel_size
 
     img_file = path + 'JPEGImages/%s.jpg' % (Filename * interval)
 
@@ -287,75 +261,30 @@ def load_pcd(path, Filename, downsample=True, interval=1):
     return source
 
 
-def nearest_neighbour(a, b):
-    """
-    find the nearest neighbours of a in b using KDTree
-    Parameters
-    ----------
-    a : (n, ) numpy.ndarray
-    b : (n, ) numpy.ndarray
+def compute_camera_pose(folder_path, intrinsics_path):
+    with open(intrinsics_path, 'r') as f:
+        camera_intrinsics = json.load(f)
 
-    Returns
-    ----------
-    dist : n float
-      Euclidian distance of the closest neighbour in b to a
-    index : n float
-      The index of the closest neighbour in b to a in terms of Euclidian distance
-    """
-    tree = KDTree(b)
-    dist, index = tree.query(a)
-    return (dist, index)
+    Ts = []
 
+    n_pcds = int(len(glob.glob1(folder_path + "JPEGImages", "*.jpg")) / LABEL_INTERVAL)
+    print("Full registration ...")
+    pose_graph = full_registration(folder_path, max_correspondence_distance_coarse,
+                                   max_correspondence_distance_fine, camera_intrinsics, n_pcds)
 
-def print_usage():
-    print("Usage: compute_gt_poses.py <path>")
-    print("path: all or name of the folder")
-    print("e.g., compute_gt_poses.py all, compute_gt_poses.py.py LINEMOD/Cheezit")
+    print("Optimizing PoseGraph ...")
+    option = pipelines.registration.GlobalOptimizationOption(
+        max_correspondence_distance=max_correspondence_distance_fine,
+        edge_prune_threshold=0.25,
+        reference_node=0)
+    pipelines.registration.global_optimization(pose_graph,
+                                               pipelines.registration.GlobalOptimizationLevenbergMarquardt(),
+                                               pipelines.registration.GlobalOptimizationConvergenceCriteria(),
+                                               option)
 
+    num_annotations = int(len(glob.glob1(folder_path + "JPEGImages", "*.jpg")) / LABEL_INTERVAL)
 
-if __name__ == "__main__":
-
-    try:
-        if sys.argv[1] == "all":
-            folders = glob.glob("LINEMOD/*/")
-        elif sys.argv[1] + "/" in glob.glob("LINEMOD/*/"):
-            folders = [sys.argv[1] + "/"]
-        else:
-            print_usage()
-            exit()
-    except:
-        print_usage()
-        exit()
-
-    for path in folders:
-
-        print(path)
-
-        with open(path + 'intrinsics.json', 'r') as f:
-            camera_intrinsics = json.load(f)
-
-        Ts = []
-
-        n_pcds = int(len(glob.glob1(path + "JPEGImages", "*.jpg")) / LABEL_INTERVAL)
-        print("Full registration ...")
-        pose_graph = full_registration(path, max_correspondence_distance_coarse,
-                                       max_correspondence_distance_fine)
-
-        print("Optimizing PoseGraph ...")
-        option = pipelines.registration.GlobalOptimizationOption(
-            max_correspondence_distance=max_correspondence_distance_fine,
-            edge_prune_threshold=0.25,
-            reference_node=0)
-        pipelines.registration.global_optimization(pose_graph,
-                                                   pipelines.registration.GlobalOptimizationLevenbergMarquardt(),
-                                                   pipelines.registration.GlobalOptimizationConvergenceCriteria(),
-                                                   option)
-
-        num_annotations = int(len(glob.glob1(path + "JPEGImages", "*.jpg")) / LABEL_INTERVAL)
-
-        for point_id in range(num_annotations):
-            Ts.append(pose_graph.nodes[point_id].pose)
-        Ts = np.array(Ts)
-        filename = path + 'transforms.npy'
-        np.save(filename, Ts)
-        print("Transforms saved")
+    for point_id in range(num_annotations):
+        Ts.append(pose_graph.nodes[point_id].pose)
+    Ts = np.array(Ts)
+    return Ts
