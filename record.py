@@ -32,8 +32,8 @@ import sys
 
 
 def make_directories(folder):
-    if not os.path.exists(folder + "JPEGImages/"):
-        os.makedirs(folder + "JPEGImages/")
+    if not os.path.exists(folder + "rgb/"):
+        os.makedirs(folder + "rgb/")
     if not os.path.exists(folder + "depth/"):
         os.makedirs(folder + "depth/")
 
@@ -59,13 +59,10 @@ if __name__ == "__main__":
         with serv.Device() as dev:
             # Save color intrinsics to the corresponding folder
             intr = dev.__getattribute__('color_intrinsics')
-            camera_parameters = {'fx': intr.fx, 'fy': intr.fy,
-                                 'ppx': intr.ppx, 'ppy': intr.ppy,
-                                 'height': intr.height, 'width': intr.width,
-                                 'depth_scale': dev.depth_scale}
 
-            with open(folder + 'intrinsics.json', 'w') as fp:
-                json.dump(camera_parameters, fp)
+            camera_parameters_data = {}
+            camera_K = [intr.fx, 0.0, intr.ppx, 0.0, intr.fy, intr.ppy, 0.0, 0.0, 1.0]
+            depth_scale = dev.depth_scale  # TODO *1000?
 
             # Set frame rate
             cnt = 0
@@ -91,8 +88,11 @@ if __name__ == "__main__":
                 # Visualize count down
 
                 if time.time() - T_start > 5:
-                    filecad = folder + "JPEGImages/%s.jpg" % FileName
-                    filedepth = folder + "depth/%s.png" % FileName
+                    camera_parameters_data[str(FileName)] = {'cam_K': camera_K, 'depth_scale': depth_scale}
+
+                    FileName_write = f'{FileName:06}'
+                    filecad = folder + "rgb/%s.png" % FileName_write
+                    filedepth = folder + "depth/%s.png" % FileName_write
                     cv2.imwrite(filecad, c)
                     with open(filedepth, 'wb') as f:
                         writer = png.Writer(width=d.shape[1], height=d.shape[0],
@@ -120,6 +120,9 @@ if __name__ == "__main__":
                     dev.stop()
                     serv.stop()
                     break
+
+            with open(folder + 'scene_camera.json', 'w') as fp:
+                json.dump(camera_parameters_data, fp)
 
     # Release everything if job is finished
     cv2.destroyAllWindows()
