@@ -217,10 +217,10 @@ def load_images(path, ID, camera_intrinsics, ):
 
     """
 
-    img_file = path + 'JPEGImages/%s.jpg' % (ID * LABEL_INTERVAL)
+    img_file = os.path.join(path, 'rgb', f'{(ID * LABEL_INTERVAL):06}' + '.png')
     cad = cv2.imread(img_file)
 
-    depth_file = path + 'depth/%s.png' % (ID * LABEL_INTERVAL)
+    depth_file = os.path.join(path, 'depth', f'{(ID * LABEL_INTERVAL):06}' + '.png')
     reader = png.Reader(depth_file)
     pngdata = reader.read()
     # depth = np.vstack(map(np.uint16, pngdata[2]))
@@ -238,11 +238,11 @@ def load_pcd(path, Filename, camera_intrinsics, downsample=True, interval=1):
 
     global voxel_size
 
-    img_file = path + 'JPEGImages/%s.jpg' % (Filename * interval)
+    img_file = os.path.join(path, 'rgb', f'{(Filename * interval):06}' + '.png')
 
     cad = cv2.imread(img_file)
     cad = cv2.cvtColor(cad, cv2.COLOR_BGR2RGB)
-    depth_file = path + 'depth/%s.png' % (Filename * interval)
+    depth_file = os.path.join(path, 'depth', f'{(Filename * interval):06}' + '.png')
     reader = png.Reader(depth_file)
     pngdata = reader.read()
     # depth = np.vstack(map(np.uint16, pngdata[2]))
@@ -261,13 +261,10 @@ def load_pcd(path, Filename, camera_intrinsics, downsample=True, interval=1):
     return source
 
 
-def compute_camera_pose(folder_path, intrinsics_path):
-    with open(intrinsics_path, 'r') as f:
-        camera_intrinsics = json.load(f)
-
+def compute_camera_pose(folder_path, camera_intrinsics):
     Ts = []
 
-    n_pcds = int(len(glob.glob1(folder_path + "JPEGImages", "*.jpg")) / LABEL_INTERVAL)
+    n_pcds = int(len(glob.glob1(folder_path + "/rgb", "*.png")) / LABEL_INTERVAL)
     print("Full registration ...")
     pose_graph = full_registration(folder_path, max_correspondence_distance_coarse,
                                    max_correspondence_distance_fine, camera_intrinsics, n_pcds)
@@ -282,7 +279,7 @@ def compute_camera_pose(folder_path, intrinsics_path):
                                                pipelines.registration.GlobalOptimizationConvergenceCriteria(),
                                                option)
 
-    num_annotations = int(len(glob.glob1(folder_path + "JPEGImages", "*.jpg")) / LABEL_INTERVAL)
+    num_annotations = int(len(glob.glob1(folder_path + "/rgb", "*.png")) / LABEL_INTERVAL)
 
     for point_id in range(num_annotations):
         Ts.append(pose_graph.nodes[point_id].pose)

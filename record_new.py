@@ -68,7 +68,7 @@ if __name__ == "__main__":
 
     camera_parameters_data = {}
     camera_K = [intr.fx, 0.0, intr.ppx, 0.0, intr.fy, intr.ppy, 0.0, 0.0, 1.0]
-    depth_scale = profile.get_device().first_depth_sensor().get_depth_scale()  # TODO *1000?
+    depth_scale = profile.get_device().first_depth_sensor().get_depth_scale()*1000
 
     align_to = rs.stream.color
     align = rs.align(align_to)

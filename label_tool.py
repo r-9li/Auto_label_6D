@@ -26,7 +26,7 @@ import camera_pose
 ################################################################################
 p = {
     # Folder containing the BOP datasets.
-    'dataset_path': '/media/r/T7 Shield/lm',
+    'dataset_path': '/media/r/T7 Shield/lm_1',
 
     # Dataset split. Options: 'train', 'test'.
     'dataset_split': 'test',
@@ -603,7 +603,7 @@ class AppWindow:
             data = json.load(f)
             cam_K = data[str(image_num)]['cam_K']
             cam_K = np.array(cam_K).reshape((3, 3))
-            depth_scale = data[str(image_num)]['depth_scale']
+            depth_scale = data[str(image_num)]['depth_scale']*1000
 
         rgb_path = os.path.join(scene_path, 'rgb', f'{image_num:06}' + '.png')
         rgb_img = cv2.imread(rgb_path)
@@ -773,8 +773,18 @@ class AppWindow:
 
                 gt_6d_pose_data = json.load(gt_scene)
                 first_frame_gt_6d_pose = gt_6d_pose_data['0']
-                T = camera_pose.compute_camera_pose(self.scenes.scenes_path, self.scenes.scenes_path + '/intrinsics'
-                                                                                                       '.json')
+                # convert camera params format
+                scene_path = os.path.join(self.scenes.scenes_path, f'{self._annotation_scene.scene_num:06}')
+                camera_params_path = os.path.join(scene_path, 'scene_camera.json')
+                with open(camera_params_path) as f:
+                    data = json.load(f)
+                    cam_K = data[str(0)]['cam_K']
+                    depth_scale = data[str(0)]['depth_scale']
+                camera_params_to_cpmpute = {'fx': cam_K[0], 'fy': cam_K[4],
+                                            'ppx': cam_K[2], 'ppy': cam_K[5],
+                                            'depth_scale': depth_scale
+                                            }
+                T = camera_pose.compute_camera_pose(scene_path, camera_params_to_cpmpute)
                 num = len(next(
                     os.walk(os.path.join(self.scenes.scenes_path, f'{self._annotation_scene.scene_num:06}', 'depth')))[
                               2])
