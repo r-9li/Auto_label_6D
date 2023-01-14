@@ -263,25 +263,31 @@ def load_pcd(path, Filename, camera_intrinsics, downsample=True, interval=1):
 
 def compute_camera_pose(folder_path, camera_intrinsics):
     Ts = []
+    T_npy_path = os.path.join(folder_path, 'transform.npy')
+    if os.path.exists(T_npy_path):
+        print('transform file exist')
+        return np.load(T_npy_path)
+    else:
+        n_pcds = int(len(glob.glob1(folder_path + "/rgb", "*.png")) / LABEL_INTERVAL)
+        print("Full registration ...")
+        pose_graph = full_registration(folder_path, max_correspondence_distance_coarse,
+                                       max_correspondence_distance_fine, camera_intrinsics, n_pcds)
 
-    n_pcds = int(len(glob.glob1(folder_path + "/rgb", "*.png")) / LABEL_INTERVAL)
-    print("Full registration ...")
-    pose_graph = full_registration(folder_path, max_correspondence_distance_coarse,
-                                   max_correspondence_distance_fine, camera_intrinsics, n_pcds)
+        print("Optimizing PoseGraph ...")
+        option = pipelines.registration.GlobalOptimizationOption(
+            max_correspondence_distance=max_correspondence_distance_fine,
+            edge_prune_threshold=0.25,
+            reference_node=0)
+        pipelines.registration.global_optimization(pose_graph,
+                                                   pipelines.registration.GlobalOptimizationLevenbergMarquardt(),
+                                                   pipelines.registration.GlobalOptimizationConvergenceCriteria(),
+                                                   option)
 
-    print("Optimizing PoseGraph ...")
-    option = pipelines.registration.GlobalOptimizationOption(
-        max_correspondence_distance=max_correspondence_distance_fine,
-        edge_prune_threshold=0.25,
-        reference_node=0)
-    pipelines.registration.global_optimization(pose_graph,
-                                               pipelines.registration.GlobalOptimizationLevenbergMarquardt(),
-                                               pipelines.registration.GlobalOptimizationConvergenceCriteria(),
-                                               option)
+        num_annotations = int(len(glob.glob1(folder_path + "/rgb", "*.png")) / LABEL_INTERVAL)
 
-    num_annotations = int(len(glob.glob1(folder_path + "/rgb", "*.png")) / LABEL_INTERVAL)
-
-    for point_id in range(num_annotations):
-        Ts.append(pose_graph.nodes[point_id].pose)
-    Ts = np.array(Ts)
-    return Ts
+        for point_id in range(num_annotations):
+            Ts.append(pose_graph.nodes[point_id].pose)
+        Ts = np.array(Ts)
+        np.save(T_npy_path, Ts)
+        print("Transforms saved")
+        return Ts

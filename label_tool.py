@@ -603,7 +603,7 @@ class AppWindow:
             data = json.load(f)
             cam_K = data[str(image_num)]['cam_K']
             cam_K = np.array(cam_K).reshape((3, 3))
-            depth_scale = data[str(image_num)]['depth_scale']*1000
+            depth_scale = data[str(image_num)]['depth_scale']
 
         rgb_path = os.path.join(scene_path, 'rgb', f'{image_num:06}' + '.png')
         rgb_img = cv2.imread(rgb_path)
@@ -782,7 +782,7 @@ class AppWindow:
                     depth_scale = data[str(0)]['depth_scale']
                 camera_params_to_cpmpute = {'fx': cam_K[0], 'fy': cam_K[4],
                                             'ppx': cam_K[2], 'ppy': cam_K[5],
-                                            'depth_scale': depth_scale
+                                            'depth_scale': depth_scale/1000
                                             }
                 T = camera_pose.compute_camera_pose(scene_path, camera_params_to_cpmpute)
                 num = len(next(
