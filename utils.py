@@ -254,3 +254,8 @@ def rigid_transform_3D(A, B):
     t = -R * centroid_A.T + centroid_B.T
 
     return (R, t)
+def poseRt(R, t):
+    ret = np.eye(4)
+    ret[:3, :3] = R
+    ret[:3, 3] = t
+    return ret

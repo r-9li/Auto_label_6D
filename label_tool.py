@@ -21,6 +21,8 @@ import json
 import cv2
 import warnings
 import camera_pose
+from tqdm import trange
+import gc
 
 # PARAMETERS.
 ################################################################################
@@ -38,7 +40,7 @@ p = {
     'start_scene_num': 1,
 
     # image number inside scene to open tool on
-    'start_image_num': 0
+    'start_image_num': 7
 
 }
 ################################################################################
@@ -248,10 +250,13 @@ class AppWindow:
         self._scene_control.add_child(self._view_numbers)
 
         self._settings_panel.add_child(self._scene_control)
+        icp_refine = gui.Button('ICP Refine')
+        icp_refine.set_on_clicked(self._on_refine)
         auto_label = gui.Button("Auto Label")
         auto_label.set_on_clicked(self._auto_label)
         generate_save_annotation = gui.Button("generate annotation - save/update")
         generate_save_annotation.set_on_clicked(self._on_generate)
+        self._scene_control.add_child(icp_refine)
         self._scene_control.add_child(auto_label)
         self._scene_control.add_child(generate_save_annotation)
 
@@ -782,25 +787,27 @@ class AppWindow:
                     depth_scale = data[str(0)]['depth_scale']
                 camera_params_to_cpmpute = {'fx': cam_K[0], 'fy': cam_K[4],
                                             'ppx': cam_K[2], 'ppy': cam_K[5],
-                                            'depth_scale': depth_scale/1000
+                                            'depth_scale': depth_scale / 1000
                                             }
                 T = camera_pose.compute_camera_pose(scene_path, camera_params_to_cpmpute)
                 num = len(next(
                     os.walk(os.path.join(self.scenes.scenes_path, f'{self._annotation_scene.scene_num:06}', 'depth')))[
                               2])
-                for current_image_index in range(1, num):
+                for current_image_index in trange(1, num):
+                    if current_image_index % 50 == 0:
+                        gc.collect()  # memory recovery
                     self.scene_load(self.scenes.scenes_path, self._annotation_scene.scene_num,
                                     current_image_index)
                     # add object (redundancy)
                     for first_frame_obj_data in first_frame_gt_6d_pose:
                         obj_index = first_frame_obj_data["obj_id"] - 1
                         obj_R = np.array(np.array(first_frame_obj_data['cam_R_m2c']), dtype=np.float64)
-                        obj_t = np.array(np.array(first_frame_obj_data['cam_t_m2c']), dtype=np.float64) / 1000
+                        obj_t = np.array(np.array(first_frame_obj_data['cam_t_m2c']), dtype=np.float64)/1000
                         # convert to meter
                         obj_transform = np.concatenate((obj_R.reshape((3, 3)), obj_t.reshape(3, 1)), axis=1)
                         obj_transform = np.concatenate((obj_transform, np.array([0, 0, 0, 1]).reshape(1, 4)))
                         # Transform mesh with camera_T
-                        obj_transform = np.matmul(T[current_image_index], obj_transform)  # TODO 存疑
+                        obj_transform = np.dot(obj_transform, T[current_image_index])
                         # Add mesh
                         meshes = self._annotation_scene.get_objects()
                         meshes = [i.obj_name for i in meshes]

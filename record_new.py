@@ -14,7 +14,7 @@ Using librealsense SDK 2.0 with pyrealsense2 for SR300 and D series cameras
 # or exit the recording earlier by pressing q
 
 RECORD_LENGTH = 40
-
+Interval_frame = 3
 import png
 import pyrealsense2 as rs
 import json
@@ -68,13 +68,15 @@ if __name__ == "__main__":
 
     camera_parameters_data = {}
     camera_K = [intr.fx, 0.0, intr.ppx, 0.0, intr.fy, intr.ppy, 0.0, 0.0, 1.0]
-    depth_scale = profile.get_device().first_depth_sensor().get_depth_scale()*1000
+    depth_scale = profile.get_device().first_depth_sensor().get_depth_scale() * 1000
 
     align_to = rs.stream.color
     align = rs.align(align_to)
 
     T_start = time.time()
+    cnt = 0
     while True:
+        cnt += 1
         frames = pipeline.wait_for_frames()
         aligned_frames = align.process(frames)
 
@@ -91,19 +93,21 @@ if __name__ == "__main__":
         # Visualize count down
 
         if time.time() - T_start > 5:
-            camera_parameters_data[str(FileName)] = {'cam_K': camera_K, 'depth_scale': depth_scale}
+            if cnt % Interval_frame == 0:
+                camera_parameters_data[str(FileName)] = {'cam_K': camera_K, 'depth_scale': depth_scale}
 
-            FileName_write = f'{FileName:06}'
-            filecad = folder + "rgb/%s.png" % FileName_write
-            filedepth = folder + "depth/%s.png" % FileName_write
-            cv2.imwrite(filecad, c)
-            with open(filedepth, 'wb') as f:
-                writer = png.Writer(width=d.shape[1], height=d.shape[0],
-                                    bitdepth=16, greyscale=True)
-                zgray2list = d.tolist()
-                writer.write(f, zgray2list)
+                FileName_write = f'{FileName:06}'
+                filecad = folder + "rgb/%s.png" % FileName_write
+                filedepth = folder + "depth/%s.png" % FileName_write
+                cv2.imwrite(filecad, c)
+                with open(filedepth, 'wb') as f:
+                    writer = png.Writer(width=d.shape[1], height=d.shape[0],
+                                        bitdepth=16, greyscale=True)
+                    zgray2list = d.tolist()
+                    writer.write(f, zgray2list)
 
-            FileName += 1
+                FileName += 1
+
         if time.time() - T_start > RECORD_LENGTH + 5:
             pipeline.stop()
             break
