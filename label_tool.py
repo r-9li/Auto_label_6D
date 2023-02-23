@@ -21,7 +21,7 @@ import json
 import cv2
 import warnings
 import camera_pose
-
+from tqdm import trange
 # PARAMETERS.
 ################################################################################
 p = {
@@ -38,7 +38,7 @@ p = {
     'start_scene_num': 1,
 
     # image number inside scene to open tool on
-    'start_image_num': 666
+    'start_image_num': 0
 
 }
 ################################################################################
@@ -821,9 +821,9 @@ class AppWindow:
                 num = len(next(
                     os.walk(os.path.join(self.scenes.scenes_path, f'{self._annotation_scene.scene_num:06}', 'depth')))[
                               2])
-                for current_image_index in range(1, num):
-                    self.scene_load(self.scenes.scenes_path, self._annotation_scene.scene_num,
-                                    current_image_index)
+                for current_image_index in trange(1, num):
+                    self._annotation_scene = AnnotationScene(None, self._annotation_scene.scene_num,
+                                                             current_image_index)
                     # add object (redundancy)
                     for first_frame_obj_data in first_frame_gt_6d_pose:
                         obj_index = first_frame_obj_data["obj_id"] - 1
@@ -837,30 +837,16 @@ class AppWindow:
                         # Add mesh
                         meshes = self._annotation_scene.get_objects()
                         meshes = [i.obj_name for i in meshes]
-                        object_geometry = o3d.io.read_point_cloud(
-                            self.scenes.objects_path + '/obj_' + f'{obj_index + 1:06}' + '.ply')
-                        object_geometry.points = o3d.utility.Vector3dVector(
-                            np.array(object_geometry.points) / 1000)  # convert mm to meter
-
-                        # object_geometry.transform(obj_transform)
-                        object_geometry.translate(obj_transform[0:3, 3])
-                        center = object_geometry.get_center()
-                        object_geometry.rotate(obj_transform[0:3, 0:3], center=center)
-
                         obj_name = self.load_model_names()
                         obj_name = obj_name[obj_index]
                         new_mesh_instance = self._obj_instance_count(obj_name, meshes)
                         new_mesh_name = str(obj_name) + '_' + str(new_mesh_instance)
-                        self._scene.scene.add_geometry(new_mesh_name, object_geometry,
-                                                       self.settings.annotation_obj_material,
-                                                       add_downsampled_copy_for_fast_rendering=True)
-                        self._annotation_scene.add_obj(object_geometry, new_mesh_name, new_mesh_instance,
+                        self._annotation_scene.add_obj(None, new_mesh_name, new_mesh_instance,
                                                        transform=obj_transform)
                         meshes = self._annotation_scene.get_objects()  # update list after adding current object
                         meshes = [i.obj_name for i in meshes]
                         self._meshes_used.set_items(meshes)
                         self._meshes_used.selected_index = len(meshes) - 1
-
                     self._on_generate()
 
                 self.window.close_dialog()
