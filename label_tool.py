@@ -21,8 +21,6 @@ import json
 import cv2
 import warnings
 import camera_pose
-from tqdm import trange
-import gc
 
 # PARAMETERS.
 ################################################################################
@@ -40,7 +38,7 @@ p = {
     'start_scene_num': 1,
 
     # image number inside scene to open tool on
-    'start_image_num': 7
+    'start_image_num': 0
 
 }
 ################################################################################
@@ -670,9 +668,11 @@ class AppWindow:
 
                     self._annotation_scene.add_obj(obj_geometry, obj_name, obj_instance, transform_cam_to_obj)
                     # adding object to the scene
+
                     obj_geometry.translate(transform_cam_to_obj[0:3, 3])
                     center = obj_geometry.get_center()
                     obj_geometry.rotate(transform_cam_to_obj[0:3, 0:3], center=center)
+                    #obj_geometry.transform(transform_cam_to_obj)
                     self._scene.scene.add_geometry(obj_name, obj_geometry, self.settings.annotation_obj_material,
                                                    add_downsampled_copy_for_fast_rendering=True)
                     active_meshes.append(obj_name)
@@ -793,21 +793,19 @@ class AppWindow:
                 num = len(next(
                     os.walk(os.path.join(self.scenes.scenes_path, f'{self._annotation_scene.scene_num:06}', 'depth')))[
                               2])
-                for current_image_index in trange(1, num):
-                    if current_image_index % 50 == 0:
-                        gc.collect()  # memory recovery
+                for current_image_index in range(1, num):
                     self.scene_load(self.scenes.scenes_path, self._annotation_scene.scene_num,
                                     current_image_index)
                     # add object (redundancy)
                     for first_frame_obj_data in first_frame_gt_6d_pose:
                         obj_index = first_frame_obj_data["obj_id"] - 1
                         obj_R = np.array(np.array(first_frame_obj_data['cam_R_m2c']), dtype=np.float64)
-                        obj_t = np.array(np.array(first_frame_obj_data['cam_t_m2c']), dtype=np.float64)/1000
+                        obj_t = np.array(np.array(first_frame_obj_data['cam_t_m2c']), dtype=np.float64) / 1000
                         # convert to meter
                         obj_transform = np.concatenate((obj_R.reshape((3, 3)), obj_t.reshape(3, 1)), axis=1)
                         obj_transform = np.concatenate((obj_transform, np.array([0, 0, 0, 1]).reshape(1, 4)))
                         # Transform mesh with camera_T
-                        obj_transform = np.dot(obj_transform, T[current_image_index])
+                        obj_transform = np.matmul(np.linalg.inv(T[current_image_index]), obj_transform)
                         # Add mesh
                         meshes = self._annotation_scene.get_objects()
                         meshes = [i.obj_name for i in meshes]
@@ -816,7 +814,11 @@ class AppWindow:
                         object_geometry.points = o3d.utility.Vector3dVector(
                             np.array(object_geometry.points) / 1000)  # convert mm to meter
 
-                        object_geometry.transform(obj_transform)
+                        #object_geometry.transform(obj_transform)
+                        object_geometry.translate(obj_transform[0:3, 3])
+                        center = object_geometry.get_center()
+                        object_geometry.rotate(obj_transform[0:3, 0:3], center=center)
+
                         obj_name = self.load_model_names()
                         obj_name = obj_name[obj_index]
                         new_mesh_instance = self._obj_instance_count(obj_name, meshes)
