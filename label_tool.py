@@ -38,7 +38,7 @@ p = {
     'start_scene_num': 1,
 
     # image number inside scene to open tool on
-    'start_image_num': 0
+    'start_image_num': 666
 
 }
 ################################################################################
@@ -206,7 +206,8 @@ class AppWindow:
         self._scene_control.set_is_open(True)
 
         self._images_buttons_label = gui.Label("Images:")
-        self._samples_buttons_label = gui.Label("Scene: ")
+        self._samples_buttons_label = gui.Label("Scene:")
+        self._jump_to_scene_label = gui.Label('Jump to:')
 
         self._pre_image_button = gui.Button("Previous")
         self._pre_image_button.horizontal_padding_em = 0.8
@@ -224,6 +225,14 @@ class AppWindow:
         self._next_sample_button.horizontal_padding_em = 0.8
         self._next_sample_button.vertical_padding_em = 0
         self._next_sample_button.set_on_clicked(self._on_next_scene)
+
+        self._jump_to_scene_button = gui.Button("Jump")
+        self._jump_to_scene_button.horizontal_padding_em = 0.8
+        self._jump_to_scene_button.vertical_padding_em = 0
+        self._jump_to_scene_button.set_on_clicked(self._jump_to_scene)
+
+        self._jump_to_scene_textbox = gui.TextEdit()
+
         # 2 rows for sample and scene control
         h = gui.Horiz(0.4 * em)  # row 1
         h.add_stretch()
@@ -232,11 +241,20 @@ class AppWindow:
         h.add_child(self._next_image_button)
         h.add_stretch()
         self._scene_control.add_child(h)
+
         h = gui.Horiz(0.4 * em)  # row 2
         h.add_stretch()
         h.add_child(self._samples_buttons_label)
         h.add_child(self._pre_sample_button)
         h.add_child(self._next_sample_button)
+        h.add_stretch()
+        self._scene_control.add_child(h)
+
+        h = gui.Horiz(0.4 * em)  # row 3
+        h.add_stretch()
+        h.add_child(self._jump_to_scene_label)
+        h.add_child(self._jump_to_scene_textbox)
+        h.add_child(self._jump_to_scene_button)
         h.add_stretch()
         self._scene_control.add_child(h)
 
@@ -288,6 +306,18 @@ class AppWindow:
         self._scene.set_on_key(self._transform)
 
         self._left_shift_modifier = False
+
+    def _jump_to_scene(self):
+        if self._check_changes():
+            return
+
+        if int(self._jump_to_scene_textbox.text_value) >= len(
+                next(os.walk(os.path.join(self.scenes.scenes_path, f'{self._annotation_scene.scene_num:06}', 'depth')))[
+                    2]):  # 2 for files which here are the how many depth images
+            self._on_error("There is no image.")
+            return
+        self.scene_load(self.scenes.scenes_path, self._annotation_scene.scene_num,
+                        int(self._jump_to_scene_textbox.text_value))
 
     def _update_scene_numbers(self):
         self._scene_number.text = "Scene: " + f'{self._annotation_scene.scene_num:06}'
@@ -672,7 +702,7 @@ class AppWindow:
                     obj_geometry.translate(transform_cam_to_obj[0:3, 3])
                     center = obj_geometry.get_center()
                     obj_geometry.rotate(transform_cam_to_obj[0:3, 0:3], center=center)
-                    #obj_geometry.transform(transform_cam_to_obj)
+                    # obj_geometry.transform(transform_cam_to_obj)
                     self._scene.scene.add_geometry(obj_name, obj_geometry, self.settings.annotation_obj_material,
                                                    add_downsampled_copy_for_fast_rendering=True)
                     active_meshes.append(obj_name)
@@ -735,8 +765,6 @@ class AppWindow:
         if self._check_changes():
             return
 
-        num = len(
-            next(os.walk(os.path.join(self.scenes.scenes_path, f'{self._annotation_scene.scene_num:06}', 'depth')))[2])
         if self._annotation_scene.image_num + 1 >= len(
                 next(os.walk(os.path.join(self.scenes.scenes_path, f'{self._annotation_scene.scene_num:06}', 'depth')))[
                     2]):  # 2 for files which here are the how many depth images
@@ -814,7 +842,7 @@ class AppWindow:
                         object_geometry.points = o3d.utility.Vector3dVector(
                             np.array(object_geometry.points) / 1000)  # convert mm to meter
 
-                        #object_geometry.transform(obj_transform)
+                        # object_geometry.transform(obj_transform)
                         object_geometry.translate(obj_transform[0:3, 3])
                         center = object_geometry.get_center()
                         object_geometry.rotate(obj_transform[0:3, 0:3], center=center)

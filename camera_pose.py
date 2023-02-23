@@ -6,21 +6,16 @@ Main Function for registering (aligning) colored point clouds with ICP/aruco mar
 matching as well as pose graph optimizating, output transforms.npy in each directory
 
 """
-import random
-import cv2.aruco as aruco
-from open3d import pipelines
-import open3d
-import numpy as np
-import cv2
-import os
 import glob
-from utils import icp, feature_registration, match_ransac, rigid_transform_3D
+import os
+
+import cv2
+import cv2.aruco as aruco
+import numpy as np
+from open3d import pipelines
 from tqdm import trange
-from pykdtree.kdtree import KDTree
-import time
-import sys
-import json
-import png
+
+from utils import icp, match_ransac, load_images, load_pcd
 
 '''
 ===============================================================================
@@ -67,43 +62,6 @@ inlier_Radius = voxel_Radius * 2.5
 
 # search for up to N frames for registration, odometry only N=1, all frames N = np.inf
 N_Neighbours = K_NEIGHBORS
-
-
-def convert_depth_frame_to_pointcloud(depth_image, camera_intrinsics):
-    """
-    Convert the depthmap to a 3D point cloud
-    Parameters:
-    -----------
-    depth_frame : (m,n) uint16
-            The depth_frame containing the depth map
-
-    camera_intrinsics : dict
-            The intrinsic values of the depth imager in whose coordinate system the depth_frame is computed
-    Return:
-    ----------
-    pointcloud : (m,n,3) float
-            The corresponding pointcloud in meters
-
-    """
-
-    [height, width] = depth_image.shape
-
-    nx = np.linspace(0, width - 1, width)
-    ny = np.linspace(0, height - 1, height)
-    u, v = np.meshgrid(nx, ny)
-    x = (u.flatten() -
-         float(camera_intrinsics['ppx'])) / float(camera_intrinsics['fx'])
-    y = (v.flatten() -
-         float(camera_intrinsics['ppy'])) / float(camera_intrinsics['fy'])
-    depth_image = depth_image * float(camera_intrinsics['depth_scale'])
-    z = depth_image.flatten()
-    x = np.multiply(x, z)
-    y = np.multiply(y, z)
-
-    pointcloud = np.dstack((x, y, z)).reshape(
-        (depth_image.shape[0], depth_image.shape[1], 3))
-
-    return pointcloud
 
 
 def marker_registration(source, target):
@@ -209,56 +167,6 @@ def full_registration(path, max_correspondence_distance_coarse,
                                                                              uncertain=True))
 
     return pose_graph  # 返回的是一个位姿图（SLAM里的概念），位姿图的节点数就是拍摄的图片数，边就是各个节点之间的变换矩阵。这个方法不止与相邻帧建立变换矩阵，还与一些不相邻的帧建立了，可能这样会更精确。
-
-
-def load_images(path, ID, camera_intrinsics, ):
-    """
-    Load a color and a depth image by path and image ID
-
-    """
-
-    img_file = os.path.join(path, 'rgb', f'{(ID * LABEL_INTERVAL):06}' + '.png')
-    cad = cv2.imread(img_file)
-
-    depth_file = os.path.join(path, 'depth', f'{(ID * LABEL_INTERVAL):06}' + '.png')
-    reader = png.Reader(depth_file)
-    pngdata = reader.read()
-    # depth = np.vstack(map(np.uint16, pngdata[2]))
-    depth = np.array(tuple(map(np.uint16, pngdata[2])))
-    pointcloud = convert_depth_frame_to_pointcloud(depth, camera_intrinsics)
-
-    return (cad, pointcloud)
-
-
-def load_pcd(path, Filename, camera_intrinsics, downsample=True, interval=1):
-    """
-     load pointcloud by path and down samle (if True) based on voxel_size
-
-     """
-
-    global voxel_size
-
-    img_file = os.path.join(path, 'rgb', f'{(Filename * interval):06}' + '.png')
-
-    cad = cv2.imread(img_file)
-    cad = cv2.cvtColor(cad, cv2.COLOR_BGR2RGB)
-    depth_file = os.path.join(path, 'depth', f'{(Filename * interval):06}' + '.png')
-    reader = png.Reader(depth_file)
-    pngdata = reader.read()
-    # depth = np.vstack(map(np.uint16, pngdata[2]))
-    depth = np.array(tuple(map(np.uint16, pngdata[2])))
-    mask = depth.copy()
-    depth = convert_depth_frame_to_pointcloud(depth, camera_intrinsics)
-
-    source = open3d.geometry.PointCloud()
-    source.points = open3d.utility.Vector3dVector(depth[mask > 0])
-    source.colors = open3d.utility.Vector3dVector(cad[mask > 0])
-
-    if downsample == True:
-        source = source.voxel_down_sample(voxel_size=voxel_size)
-        source.estimate_normals(open3d.geometry.KDTreeSearchParamHybrid(radius=0.002 * 2, max_nn=30))
-
-    return source
 
 
 def compute_camera_pose(folder_path, camera_intrinsics):
