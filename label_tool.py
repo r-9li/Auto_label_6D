@@ -22,11 +22,13 @@ import cv2
 import warnings
 import camera_pose
 from tqdm import trange
+from sklearn.neighbors import KDTree
+
 # PARAMETERS.
 ################################################################################
 p = {
     # Folder containing the BOP datasets.
-    'dataset_path': '/media/r/T7 Shield/lm_1',
+    'dataset_path': '/media/r/T7 Shield/lm_2',
 
     # Dataset split. Options: 'train', 'test'.
     'dataset_split': 'test',
@@ -791,19 +793,106 @@ class AppWindow:
             return False
         return '0' in gt_6d_pose_data.keys()
 
+    def _detect_invisible_object(self):
+        json_6d_path = os.path.join(self.scenes.scenes_path, f"{self._annotation_scene.scene_num:06}",
+                                    "scene_gt.json")
+        if os.path.exists(json_6d_path):
+            with open(json_6d_path, "r") as gt_scene:
+                gt_6d_pose_data = json.load(gt_scene)
+
+        with open(json_6d_path, "w+") as gt_scene:
+            scene_path = os.path.join(self.scenes.scenes_path, f'{self._annotation_scene.scene_num:06}')
+            num = len(next(
+                os.walk(os.path.join(self.scenes.scenes_path, f'{self._annotation_scene.scene_num:06}', 'depth')))[
+                          2])
+            for current_image_index in trange(1, num):
+
+                camera_params_path = os.path.join(scene_path, 'scene_camera.json')
+                with open(camera_params_path) as f:
+                    data = json.load(f)
+                    cam_K = data[str(current_image_index)]['cam_K']
+                    cam_K = np.array(cam_K).reshape((3, 3))
+                    depth_scale = data[str(current_image_index)]['depth_scale']
+
+                rgb_path = os.path.join(scene_path, 'rgb', f'{current_image_index:06}' + '.png')
+                rgb_img = cv2.imread(rgb_path)
+                depth_path = os.path.join(scene_path, 'depth', f'{current_image_index:06}' + '.png')
+                depth_img = cv2.imread(depth_path, -1)
+                depth_img = np.float32(depth_img * depth_scale / 1000)
+                try:
+                    geometry = self._make_point_cloud(rgb_img, depth_img, cam_K)  # scene point cloud
+                except Exception:
+                    print("Failed to generate scene point cloud.")
+
+                try:
+                    scene_data = gt_6d_pose_data[str(current_image_index)]
+                    for obj in scene_data:
+                        obj_geometry = o3d.io.read_point_cloud(
+                            os.path.join(self.scenes.objects_path, 'obj_' + f"{int(obj['obj_id']):06}" + '.ply'))
+                        obj_geometry.points = o3d.utility.Vector3dVector(
+                            np.array(obj_geometry.points) / 1000)  # convert mm to meter
+
+                        translation = np.array(np.array(obj['cam_t_m2c']), dtype=np.float64) / 1000  # convert to meter
+                        orientation = np.array(np.array(obj['cam_R_m2c']), dtype=np.float64)
+                        transform = np.concatenate((orientation.reshape((3, 3)), translation.reshape(3, 1)), axis=1)
+                        transform_cam_to_obj = np.concatenate(
+                            (transform, np.array([0, 0, 0, 1]).reshape(1, 4)))  # homogeneous transform
+
+                        obj_geometry.translate(transform_cam_to_obj[0:3, 3])
+                        center = obj_geometry.get_center()
+                        obj_geometry.rotate(transform_cam_to_obj[0:3, 0:3], center=center)
+
+                        obj_geometry_obb = obj_geometry.get_oriented_bounding_box()
+                        crop_geometry = geometry.crop(obj_geometry_obb)
+                        if len(crop_geometry.points) == 0:
+                            gt_6d_pose_data[str(current_image_index)].remove(obj)
+                            del obj_geometry, crop_geometry
+                            continue
+                        voxel_size = 0.003
+                        obj_geometry_voxel = o3d.geometry.VoxelGrid.create_from_point_cloud(input=obj_geometry,
+                                                                                            voxel_size=voxel_size)
+                        crop_geometry_voxel = o3d.geometry.VoxelGrid.create_from_point_cloud(input=crop_geometry,
+                                                                                             voxel_size=voxel_size)
+                        obj_geometry_voxel_index = obj_geometry_voxel.get_voxels()
+                        crop_geometry_voxel_index = crop_geometry_voxel.get_voxels()
+                        obj_geometry_downsample = []
+                        for voxel in obj_geometry_voxel_index:
+                            obj_geometry_downsample.append(
+                                obj_geometry_voxel.get_voxel_center_coordinate(voxel.grid_index))
+                        obj_geometry_downsample = np.array(obj_geometry_downsample)
+                        crop_geometry_downsample = []
+                        for voxel in crop_geometry_voxel_index:
+                            crop_geometry_downsample.append(
+                                crop_geometry_voxel.get_voxel_center_coordinate(voxel.grid_index))
+                        crop_geometry_downsample = np.array(crop_geometry_downsample)
+
+                        crop_geometry_downsample_pcd = o3d.geometry.PointCloud()
+                        crop_geometry_downsample_pcd.points = o3d.utility.Vector3dVector(crop_geometry_downsample)
+                        crop_geometry_downsample_pcd_tree = o3d.geometry.KDTreeFlann(crop_geometry_downsample_pcd)
+                        distances = []
+                        for point in obj_geometry_downsample:
+                            _, _, point_dist = crop_geometry_downsample_pcd_tree.search_knn_vector_3d(point, 1)
+                            distances.append(point_dist)
+                        distances = np.array(distances)
+                        overlap_ratio = np.mean(
+                            distances < voxel_size)  # overlap_ratio=overlap_point/obj_point
+
+                        if overlap_ratio < 0.05:  # threshold
+                            gt_6d_pose_data[str(current_image_index)].remove(obj)
+
+                        del obj_geometry, obj_geometry_voxel, obj_geometry_voxel_index, obj_geometry_downsample
+                        del crop_geometry, crop_geometry_voxel, crop_geometry_voxel_index, crop_geometry_downsample, crop_geometry_downsample_pcd, crop_geometry_downsample_pcd_tree
+
+                    del geometry
+                except Exception as e:
+                    print(e)
+            json.dump(gt_6d_pose_data, gt_scene)
+
     def _auto_label(self):
         if self._check_first_frame_labeled():
             json_6d_path = os.path.join(self.scenes.scenes_path, f"{self._annotation_scene.scene_num:06}",
                                         "scene_gt.json")
             with open(json_6d_path, "r") as gt_scene:
-                # wait dialog
-                temp_dlg = gui.Dialog('Wait')
-                temp_em = self.window.theme.font_size
-                temp_dlg_layout = gui.Vert(temp_em, gui.Margins(temp_em, temp_em, temp_em, temp_em))
-                temp_dlg_layout.add_child(gui.Label('Processing, please wait'))
-                temp_dlg.add_child(temp_dlg_layout)
-                self.window.show_dialog(temp_dlg)
-
                 gt_6d_pose_data = json.load(gt_scene)
                 first_frame_gt_6d_pose = gt_6d_pose_data['0']
                 # convert camera params format
@@ -813,11 +902,11 @@ class AppWindow:
                     data = json.load(f)
                     cam_K = data[str(0)]['cam_K']
                     depth_scale = data[str(0)]['depth_scale']
-                camera_params_to_cpmpute = {'fx': cam_K[0], 'fy': cam_K[4],
+                camera_params_to_compute = {'fx': cam_K[0], 'fy': cam_K[4],
                                             'ppx': cam_K[2], 'ppy': cam_K[5],
                                             'depth_scale': depth_scale / 1000
                                             }
-                T = camera_pose.compute_camera_pose(scene_path, camera_params_to_cpmpute)
+                T = camera_pose.compute_camera_pose(scene_path, camera_params_to_compute)
                 num = len(next(
                     os.walk(os.path.join(self.scenes.scenes_path, f'{self._annotation_scene.scene_num:06}', 'depth')))[
                               2])
@@ -848,10 +937,9 @@ class AppWindow:
                         self._meshes_used.set_items(meshes)
                         self._meshes_used.selected_index = len(meshes) - 1
                     self._on_generate()
-
-                self.window.close_dialog()
-
-
+            self._update_scene_numbers()
+            self._detect_invisible_object()
+            self._on_error('Processing completed')
         else:
             self._on_error('The first frame is not labeled')
             return
