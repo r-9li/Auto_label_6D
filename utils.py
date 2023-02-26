@@ -11,7 +11,7 @@ import numpy as np
 import cv2
 from open3d import pipelines
 import png
-from params import VOXEL_SIZE, LABEL_INTERVAL
+from params import VOXEL_SIZE, LABEL_INTERVAL, N_Neighbours
 
 
 def icp(source, target, voxel_size, max_correspondence_distance_coarse, max_correspondence_distance_fine,
@@ -345,3 +345,12 @@ def load_pcd(path, Filename, camera_intrinsics, downsample=True, interval=1):
         source.estimate_normals(open3d.geometry.KDTreeSearchParamHybrid(radius=0.002 * 2, max_nn=30))
 
     return source
+
+
+def make_target_frame_list(source_id, n_pcds):
+    target_frame_list = list(range(source_id + 1, n_pcds, max(1, int(n_pcds / N_Neighbours))))
+    for i in range(N_Neighbours):
+        target_frame_list.append(min(n_pcds - 1, source_id + 3 * i))
+    target_frame_list = list(set(target_frame_list))
+    target_frame_list.sort()
+    return target_frame_list

@@ -15,7 +15,7 @@ import numpy as np
 from open3d import pipelines
 from tqdm import trange
 
-from utils import icp, match_ransac, load_images, load_pcd, feature_registration
+from utils import icp, match_ransac, load_images, load_pcd, feature_registration, make_target_frame_list
 from params import max_correspondence_distance_coarse, max_correspondence_distance_fine, VOXEL_SIZE, ICP_METHOD, \
     LABEL_INTERVAL, N_Neighbours
 
@@ -85,9 +85,8 @@ def full_registration(path, max_correspondence_distance_coarse,
     for source_id in trange(n_pcds):  # 对每一帧进行处理
         if source_id > 0:
             pcds[source_id - 1] = []
-        # for target_id in range(source_id + 1, min(source_id + N_Neighbours,n_pcds)):
-        for target_id in range(source_id + 1, n_pcds,
-                               max(1, int(n_pcds / N_Neighbours))):  # source_id是当前帧，target_id是目标帧
+        target_id_list = make_target_frame_list(source_id, n_pcds)
+        for target_id in target_id_list:  # source_id是当前帧，target_id是目标帧
 
             # derive pairwise registration through feature matching
             color_src, depth_src = load_images(path, source_id, camera_intrinsics)
