@@ -12,17 +12,18 @@ original repo: https://github.com/FLW-TUDO/3d_annotation_tool
 """
 
 import glob
+import json
+import os
+import warnings
+
+import cv2
 import numpy as np
 import open3d as o3d
 import open3d.visualization.gui as gui
 import open3d.visualization.rendering as rendering
-import os
-import json
-import cv2
-import warnings
-import camera_pose
 from tqdm import trange
-from sklearn.neighbors import KDTree
+
+import camera_pose
 
 # PARAMETERS.
 ################################################################################
@@ -938,7 +939,9 @@ class AppWindow:
                         self._meshes_used.selected_index = len(meshes) - 1
                     self._on_generate()
             self._update_scene_numbers()
+            print("Detect invisible object ...")
             self._detect_invisible_object()
+            self._update_scene_numbers()
             self._on_error('Processing completed')
         else:
             self._on_error('The first frame is not labeled')

@@ -15,53 +15,9 @@ import numpy as np
 from open3d import pipelines
 from tqdm import trange
 
-from utils import icp, match_ransac, load_images, load_pcd
-
-'''
-===============================================================================
-Define a set of parameters related to fragment registration
-===============================================================================
-'''
-# Voxel size used to down sample the raw pointcloud for faster ICP
-VOXEL_SIZE = 0.001
-
-# Set up parameters for post-processing
-# Voxel size for the complete mesh
-VOXEL_R = 0.0002
-
-# search for up to N frames for registration, odometry only N=1, all frames N = np.inf
-# for any N!= np.inf, the refinement is local
-K_NEIGHBORS = 10
-
-# Specify an icp algorithm
-# "colored-icp", as in Park, Q.-Y. Zhou, and V. Koltun, Colored Point Cloud Registration Revisited, ICCV, 2017 (slower)
-# "point-to-plane", a coarse to fine implementation of point-to-plane icp (faster)
-
-ICP_METHOD = "point-to-plane"
-
-# specify the frenquency of labeling ground truth pose
-
-LABEL_INTERVAL = 1
-
-# specify the frenquency of segments used in mesh reconstruction
-
-RECONSTRUCTION_INTERVAL = 10
-
-# Set up parameters for registration
-# voxel sizes use to down sample raw pointcloud for fast ICP
-voxel_size = VOXEL_SIZE
-max_correspondence_distance_coarse = voxel_size * 15
-max_correspondence_distance_fine = voxel_size * 1.5
-
-# Set up parameters for post-processing
-# Voxel size for the complete mesh
-voxel_Radius = VOXEL_R
-
-# Point considered an outlier if more than inlier_Radius away from other points
-inlier_Radius = voxel_Radius * 2.5
-
-# search for up to N frames for registration, odometry only N=1, all frames N = np.inf
-N_Neighbours = K_NEIGHBORS
+from utils import icp, match_ransac, load_images, load_pcd, feature_registration
+from params import max_correspondence_distance_coarse, max_correspondence_distance_fine, VOXEL_SIZE, ICP_METHOD, \
+    LABEL_INTERVAL, N_Neighbours
 
 
 def marker_registration(source, target):
@@ -76,6 +32,10 @@ def marker_registration(source, target):
     # lists of ids and the corners beloning to each id
     corners_src, _ids_src, rejectedImgPoints = aruco.detectMarkers(gray_src, aruco_dict, parameters=parameters)
     corners_des, _ids_des, rejectedImgPoints = aruco.detectMarkers(gray_des, aruco_dict, parameters=parameters)
+
+    feature_src_good, feature_dst_good = feature_registration(source, target)
+    assert len(feature_src_good) == len(feature_dst_good)
+
     try:
         ids_src = []
         ids_des = []
@@ -88,7 +48,7 @@ def marker_registration(source, target):
 
     common = [x for x in ids_src if x in ids_des]
 
-    if len(common) < 2:
+    if (len(common) + len(feature_src_good)) < 12:
         # too few marker matches, use icp instead
         return None
 
@@ -104,6 +64,9 @@ def marker_registration(source, target):
                     src_good.append(feature_3D_src)
                     dst_good.append(feature_3D_des)
 
+    src_good += feature_src_good
+    dst_good += feature_dst_good
+
     # get rigid transforms between 2 set of feature points through ransac
     try:
         transform = match_ransac(np.asarray(src_good), np.asarray(dst_good))
@@ -114,7 +77,6 @@ def marker_registration(source, target):
 
 def full_registration(path, max_correspondence_distance_coarse,
                       max_correspondence_distance_fine, camera_intrinsics, n_pcds):
-    global N_Neighbours, LABEL_INTERVAL
     pose_graph = pipelines.registration.PoseGraph()
     odometry = np.identity(4)
     pose_graph.nodes.append(pipelines.registration.PoseGraphNode(odometry))
@@ -144,7 +106,7 @@ def full_registration(path, max_correspondence_distance_coarse,
             if res is None:
                 # if marker_registration fails, perform pointcloud matching
                 transformation_icp, information_icp = icp(
-                    pcds[source_id], pcds[target_id], voxel_size, max_correspondence_distance_coarse,
+                    pcds[source_id], pcds[target_id], VOXEL_SIZE, max_correspondence_distance_coarse,
                     max_correspondence_distance_fine, method=ICP_METHOD)
 
             else:

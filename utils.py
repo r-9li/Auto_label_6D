@@ -11,7 +11,9 @@ import numpy as np
 import cv2
 from open3d import pipelines
 import png
-LABEL_INTERVAL = 1
+from params import VOXEL_SIZE, LABEL_INTERVAL
+
+
 def icp(source, target, voxel_size, max_correspondence_distance_coarse, max_correspondence_distance_fine,
         method="colored-icp"):
     """
@@ -103,7 +105,7 @@ def feature_registration(source, target, MIN_MATCH_COUNT=12):
     cad_des, depth_des = target
 
     # Initiate SIFT detector
-    sift = cv2.xfeatures2d.SIFT_create()
+    sift = cv2.SIFT_create()
 
     # find the keypoints and descripto  rs with SIFT
     kp1, des1 = sift.detectAndCompute(cad_src, None)
@@ -114,7 +116,7 @@ def feature_registration(source, target, MIN_MATCH_COUNT=12):
     matches = bf.knnMatch(des1, des2, k=2)
     good = []
     for m, n in matches:
-        if m.distance < 0.7 * n.distance:
+        if m.distance < 0.6 * n.distance:
             good.append(m)
 
     # if number of good matching feature point is greater than the MIN_MATCH_COUNT
@@ -126,12 +128,13 @@ def feature_registration(source, target, MIN_MATCH_COUNT=12):
         matchesMask = mask.ravel().tolist()
 
         bad_match_index = np.where(np.array(matchesMask) == 0)
+
         src_index = np.vstack(src_pts).squeeze()
         src_index = np.delete(src_index, tuple(bad_match_index[0]), axis=0)
         src_index[:, [0, 1]] = src_index[:, [1, 0]]
         src_index = tuple(src_index.T.astype(np.int32))
-
         src_depths = depth_src[src_index]
+
         dst_index = np.vstack(dst_pts).squeeze()
         dst_index = np.delete(dst_index, tuple(bad_match_index[0]), axis=0)
         dst_index[:, [0, 1]] = dst_index[:, [1, 0]]
@@ -140,20 +143,16 @@ def feature_registration(source, target, MIN_MATCH_COUNT=12):
 
         dst_good = []
         src_good = []
-        dst_depths = dst_depths[matchesMask > 0][0]
-        src_depths = src_depths[matchesMask > 0][0]
 
         for i in range(len(dst_depths)):
             if np.sum(dst_depths[i]) != 0 and np.sum(src_depths[i]) != 0:
-                dst_good.append(dst_depths[i].tolist())
-                src_good.append(src_depths[i].tolist())
+                dst_good.append(dst_depths[i])
+                src_good.append(src_depths[i])
 
-        # get rigid transforms between 2 set of feature points through ransac
-        transform = match_ransac(np.asarray(src_good), np.asarray(dst_good))
-        return transform
+        return src_good, dst_good
 
     else:
-        return None
+        return [], []
 
 
 def match_ransac(p, p_prime, tol=0.01):
@@ -190,8 +189,8 @@ def match_ransac(p, p_prime, tol=0.01):
     assert len(p) == len(p_prime)
     R_temp, t_temp = rigid_transform_3D(p, p_prime)
     R_temp = np.array(R_temp)
-    t_temp = (np.array(t_temp).T)[0]
-    transformed = (np.dot(R_temp, p.T).T) + t_temp
+    t_temp = np.array(t_temp).T[0]
+    transformed = np.dot(R_temp, p.T).T + t_temp
     error = (transformed - p_prime) ** 2
     error = np.sum(error, axis=1)
     error = np.sqrt(error)
@@ -207,7 +206,7 @@ def match_ransac(p, p_prime, tol=0.01):
                      [0, 0, 0, 1]]
         return transform
 
-        return None
+    return None
 
 
 def rigid_transform_3D(A, B):
@@ -254,11 +253,15 @@ def rigid_transform_3D(A, B):
     t = -R * centroid_A.T + centroid_B.T
 
     return (R, t)
+
+
 def poseRt(R, t):
     ret = np.eye(4)
     ret[:3, :3] = R
     ret[:3, 3] = t
     return ret
+
+
 def convert_depth_frame_to_pointcloud(depth_image, camera_intrinsics):
     """
     Convert the depthmap to a 3D point cloud
@@ -294,6 +297,8 @@ def convert_depth_frame_to_pointcloud(depth_image, camera_intrinsics):
         (depth_image.shape[0], depth_image.shape[1], 3))
 
     return pointcloud
+
+
 def load_images(path, ID, camera_intrinsics, ):
     """
     Load a color and a depth image by path and image ID
@@ -319,8 +324,6 @@ def load_pcd(path, Filename, camera_intrinsics, downsample=True, interval=1):
 
      """
 
-    global voxel_size
-
     img_file = os.path.join(path, 'rgb', f'{(Filename * interval):06}' + '.png')
 
     cad = cv2.imread(img_file)
@@ -338,7 +341,7 @@ def load_pcd(path, Filename, camera_intrinsics, downsample=True, interval=1):
     source.colors = open3d.utility.Vector3dVector(cad[mask > 0])
 
     if downsample == True:
-        source = source.voxel_down_sample(voxel_size=voxel_size)
+        source = source.voxel_down_sample(voxel_size=VOXEL_SIZE)
         source.estimate_normals(open3d.geometry.KDTreeSearchParamHybrid(radius=0.002 * 2, max_nn=30))
 
     return source
