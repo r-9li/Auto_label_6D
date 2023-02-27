@@ -155,7 +155,7 @@ def feature_registration(source, target, MIN_MATCH_COUNT=12):
         return [], []
 
 
-def match_ransac(p, p_prime, tol=0.01):
+def match_ransac(p, p_prime, num_iterations=3000, tol=0.005):
     """
     A ransac process that estimates the transform between two set of points
     p and p_prime.
@@ -180,33 +180,42 @@ def match_ransac(p, p_prime, tol=0.01):
       if None, the ransac does not find a sufficiently good solution
 
     """
-
-    leastError = None
-    R = None
-    t = None
-    # the smallest 70% of the error is used to compute RMSE
-    k = int(len(p) * 0.7)
+    k = 18
     assert len(p) == len(p_prime)
-    R_temp, t_temp = rigid_transform_3D(p, p_prime)
-    R_temp = np.array(R_temp)
-    t_temp = np.array(t_temp).T[0]
-    transformed = np.dot(R_temp, p.T).T + t_temp
+    max_inliers = 0
+    n = len(p)
+    for i in range(num_iterations):
+        idx = np.random.choice(n, k, replace=False)
+        R_temp, t_temp = rigid_transform_3D(p[idx, :], p_prime[idx, :])
+        R_temp = np.array(R_temp)
+        t_temp = np.array(t_temp).T[0]
+        # Error
+        transformed = np.dot(R_temp, p.T).T + t_temp
+        error = (transformed - p_prime) ** 2
+        error = np.sum(error, axis=1)
+        error = np.sqrt(error)
+
+        inliers = np.where(error < tol)[0]
+        num_inliers = len(inliers)
+        if num_inliers > max_inliers:
+            max_inliers = num_inliers
+            best_R, best_t = rigid_transform_3D(p[inliers, :], p_prime[inliers, :])
+            best_R = np.array(best_R)
+            best_t = np.array(best_t).T[0]
+
+    transformed = np.dot(best_R, p.T).T + best_t
     error = (transformed - p_prime) ** 2
     error = np.sum(error, axis=1)
     error = np.sqrt(error)
-
-    RMSE = np.sum(error[np.argpartition(error, k)[:k]]) / k
-    if RMSE < tol:
-        R = R_temp
-        t = t_temp
-
-        transform = [[R[0][0], R[0][1], R[0][2], t[0]],
-                     [R[1][0], R[1][1], R[1][2], t[1]],
-                     [R[2][0], R[2][1], R[2][2], t[2]],
-                     [0, 0, 0, 1]]
-        return transform
-
-    return None
+    inliers = np.where(error < tol)[0]
+    best_R, best_t = rigid_transform_3D(p[inliers, :], p_prime[inliers, :])
+    R = np.array(best_R)
+    tt = np.array(best_t).T[0]
+    transform = [[R[0][0], R[0][1], R[0][2], tt[0]],
+                 [R[1][0], R[1][1], R[1][2], tt[1]],
+                 [R[2][0], R[2][1], R[2][2], tt[2]],
+                 [0, 0, 0, 1]]
+    return transform
 
 
 def rigid_transform_3D(A, B):
@@ -234,7 +243,7 @@ def rigid_transform_3D(A, B):
     assert len(A) == len(B)
     A = np.asmatrix(A)
     B = np.asmatrix(B)
-    N = A.shape[0];
+    N = A.shape[0]
 
     centroid_A = np.mean(A, axis=0)
     centroid_B = np.mean(B, axis=0)

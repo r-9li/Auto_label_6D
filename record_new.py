@@ -13,8 +13,6 @@ Using librealsense SDK 2.0 with pyrealsense2 for SR300 and D series cameras
 # record for 40s after a 5s count down
 # or exit the recording earlier by pressing q
 
-RECORD_LENGTH = 40
-Interval_frame = 3
 import png
 import pyrealsense2 as rs
 import json
@@ -26,6 +24,7 @@ import cv2
 import time
 import os
 import sys
+from params import RECORD_FRAME_NUM, Interval_frame
 
 
 # from config.DataAcquisitionParameters import DEPTH_THRESH
@@ -108,15 +107,15 @@ if __name__ == "__main__":
 
                 FileName += 1
 
-        if time.time() - T_start > RECORD_LENGTH + 5:
+        if FileName >= RECORD_FRAME_NUM:
             pipeline.stop()
             break
 
         if time.time() - T_start < 5:
             cv2.putText(c, str(5 - int(time.time() - T_start)), (240, 320), cv2.FONT_HERSHEY_SCRIPT_SIMPLEX, 4,
                         (0, 0, 255), 2, cv2.LINE_AA)
-        if time.time() - T_start > RECORD_LENGTH:
-            cv2.putText(c, str(RECORD_LENGTH + 5 - int(time.time() - T_start)), (240, 320),
+        if FileName >= RECORD_FRAME_NUM - 150:
+            cv2.putText(c, str(RECORD_FRAME_NUM - FileName), (240, 320),
                         cv2.FONT_HERSHEY_SCRIPT_SIMPLEX, 4, (0, 0, 255), 2, cv2.LINE_AA)
         cv2.imshow('COLOR IMAGE', c)
 

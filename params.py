@@ -4,3 +4,5 @@ max_correspondence_distance_fine = VOXEL_SIZE * 1.5
 LABEL_INTERVAL = 1
 N_Neighbours = 12
 ICP_METHOD = "point-to-plane"
+RECORD_FRAME_NUM = 2400
+Interval_frame = 3
