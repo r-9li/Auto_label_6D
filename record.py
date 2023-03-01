@@ -95,7 +95,7 @@ if __name__ == "__main__":
                         FileName_write = f'{FileName:06}'
                         filecad = folder + "rgb/%s.png" % FileName_write
                         filedepth = folder + "depth/%s.png" % FileName_write
-                        cv2.imwrite(filecad, c)
+                        cv2.imwrite(filecad, c, [cv2.IMWRITE_PNG_COMPRESSION, 0])
                         with open(filedepth, 'wb') as f:
                             writer = png.Writer(width=d.shape[1], height=d.shape[0],
                                                 bitdepth=16, greyscale=True)
