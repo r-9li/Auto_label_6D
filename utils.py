@@ -201,33 +201,17 @@ def match_ransac(p, p_prime, num_iterations=3000, tol=0.005):
     assert len(p) == len(p_prime)
     max_inliers = 0
     n = len(p)
-    for i in range(num_iterations):
-        idx = np.random.choice(n, k, replace=False)
-        R_temp, t_temp = rigid_transform_3D(p[idx, :], p_prime[idx, :])
-        R_temp = np.array(R_temp)
-        t_temp = np.array(t_temp).T[0]
-        # Error
-        transformed = np.dot(R_temp, p.T).T + t_temp
-        error = (transformed - p_prime) ** 2
-        error = np.sum(error, axis=1)
-        error = np.sqrt(error)
 
-        inliers = np.where(error < tol)[0]
-        num_inliers = len(inliers)
+    results = Parallel(n_jobs=-1)(delayed(ransac_iteration)(p, p_prime, tol, n, k) for i in range(num_iterations))
+    for inliers, num_inliers in results:
         if num_inliers > max_inliers:
             max_inliers = num_inliers
-            best_R, best_t = rigid_transform_3D(p[inliers, :], p_prime[inliers, :])
-            best_R = np.array(best_R)
-            best_t = np.array(best_t).T[0]
-    #
-    # results = Parallel(n_jobs=-1)(delayed(ransac_iteration)(p, p_prime, tol, n, k) for i in range(num_iterations))
-    # for inliers, num_inliers in results:
-    #     if num_inliers > max_inliers:
-    #         max_inliers = num_inliers
-    #         best_R, best_t = rigid_transform_3D(p[inliers, :], p_prime[inliers, :])
-    #         best_R = np.array(best_R)
-    #         best_t = np.array(best_t).T[0]
-    #
+            best_inliers = inliers
+
+    best_R, best_t = rigid_transform_3D(p[best_inliers, :], p_prime[best_inliers, :])
+    best_R = np.array(best_R)
+    best_t = np.array(best_t).T[0]
+
     transformed = np.dot(best_R, p.T).T + best_t
     error = (transformed - p_prime) ** 2
     error = np.sum(error, axis=1)
