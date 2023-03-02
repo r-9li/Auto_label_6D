@@ -12,6 +12,7 @@ import cv2
 from open3d import pipelines
 import png
 from params import VOXEL_SIZE, LABEL_INTERVAL, N_Neighbours
+from joblib import Parallel, delayed
 
 
 def icp(source, target, voxel_size, max_correspondence_distance_coarse, max_correspondence_distance_fine,
@@ -155,6 +156,22 @@ def feature_registration(source, target, MIN_MATCH_COUNT=12):
         return [], []
 
 
+def ransac_iteration(p, p_prime, threshold, n, k):
+    idx = np.random.choice(n, k, replace=False)
+    R_temp, t_temp = rigid_transform_3D(p[idx, :], p_prime[idx, :])
+    R_temp = np.array(R_temp)
+    t_temp = np.array(t_temp).T[0]
+    # Error
+    transformed = np.dot(R_temp, p.T).T + t_temp
+    error = (transformed - p_prime) ** 2
+    error = np.sum(error, axis=1)
+    error = np.sqrt(error)
+
+    inliers = np.where(error < threshold)[0]
+    num_inliers = len(inliers)
+    return inliers, num_inliers
+
+
 def match_ransac(p, p_prime, num_iterations=3000, tol=0.005):
     """
     A ransac process that estimates the transform between two set of points
@@ -202,7 +219,15 @@ def match_ransac(p, p_prime, num_iterations=3000, tol=0.005):
             best_R, best_t = rigid_transform_3D(p[inliers, :], p_prime[inliers, :])
             best_R = np.array(best_R)
             best_t = np.array(best_t).T[0]
-
+    #
+    # results = Parallel(n_jobs=-1)(delayed(ransac_iteration)(p, p_prime, tol, n, k) for i in range(num_iterations))
+    # for inliers, num_inliers in results:
+    #     if num_inliers > max_inliers:
+    #         max_inliers = num_inliers
+    #         best_R, best_t = rigid_transform_3D(p[inliers, :], p_prime[inliers, :])
+    #         best_R = np.array(best_R)
+    #         best_t = np.array(best_t).T[0]
+    #
     transformed = np.dot(best_R, p.T).T + best_t
     error = (transformed - p_prime) ** 2
     error = np.sum(error, axis=1)
