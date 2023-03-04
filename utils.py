@@ -13,32 +13,11 @@ from open3d import pipelines
 import png
 from params import VOXEL_SIZE, LABEL_INTERVAL, N_Neighbours
 from joblib import Parallel, delayed
+import open3d as o3d
 
 
-def icp(source, target, voxel_size, max_correspondence_distance_coarse, max_correspondence_distance_fine,
-        method="colored-icp"):
+def multiscale_icp(source, target, voxel_size, max_iter, method_list, init_transformation=np.identity(4)):
     """
-    Perform pointcloud registration using iterative closest point.
-
-    Parameters
-    ----------
-    source : An open3d.Pointcloud instance
-      6D pontcloud of a source segment
-    target : An open3d.Pointcloud instance
-      6D pointcloud of a target segment
-    method : string
-      colored-icp, as in Park, Q.-Y. Zhou, and V. Koltun, Colored Point Cloud
-      Registration Revisited, ICCV, 2017 (slower)
-      point-to-plane, a coarse to fine implementation of point-to-plane icp (faster)
-    max_correspondence_distance_coarse : float
-      The max correspondence distance used for the course ICP during the process
-      of coarse to fine registration (if point-to-plane)
-    max_correspondence_distance_fine : float
-      The max correspondence distance used for the fine ICP during the process
-      of coarse to fine registration (if point-to-plane)
-
-    Returns
-    ----------
     transformation_icp: (4,4) float
       The homogeneous rigid transformation that transforms source to the target's
       frame
@@ -47,30 +26,60 @@ def icp(source, target, voxel_size, max_correspondence_distance_coarse, max_corr
       point_clouds function
     """
 
-    assert method in ["point-to-plane", "colored-icp"], "point-to-plane or colored-icp"
-    if method == "point-to-plane":
-        icp_coarse = pipelines.registration.registration_icp(source, target,
-                                                             max_correspondence_distance_coarse, np.identity(4),
-                                                             pipelines.registration.TransformationEstimationPointToPlane())
-        icp_fine = pipelines.registration.registration_icp(source, target,
-                                                           max_correspondence_distance_fine, icp_coarse.transformation,
-                                                           pipelines.registration.TransformationEstimationPointToPlane())
+    assert len(voxel_size) == len(max_iter) == len(method_list)
+    current_transformation = init_transformation
 
-        transformation_icp = icp_fine.transformation
+    for i in range(len(voxel_size)):
+        method = method_list[i]
+        assert method in ["point_to_plane", "color", "generalized"], "point_to_plane or color or generalized"
+        iter = max_iter[i]
+        distance_threshold = voxel_size[i] * 1.4
+        source_down = source.voxel_down_sample(voxel_size[i])
+        target_down = target.voxel_down_sample(voxel_size[i])
 
-    if method == "colored-icp":
-        result_icp = pipelines.registration.registration_colored_icp(source, target, voxel_size, np.identity(4),
-                                                                     pipelines.registration.ICPConvergenceCriteria(
-                                                                         relative_fitness=1e-8,
-                                                                         relative_rmse=1e-8, max_iteration=50))
+        source_down.estimate_normals(
+            o3d.geometry.KDTreeSearchParamHybrid(radius=voxel_size[i] * 2.0, max_nn=30))
+        target_down.estimate_normals(
+            o3d.geometry.KDTreeSearchParamHybrid(radius=voxel_size[i] * 2.0, max_nn=30))
 
-        transformation_icp = result_icp.transformation
+        if method == "point_to_plane":
+            loss = o3d.pipelines.registration.TukeyLoss(0.1)
+            result_icp = o3d.pipelines.registration.registration_icp(
+                source_down, target_down, distance_threshold,
+                current_transformation,
+                o3d.pipelines.registration.
+                TransformationEstimationPointToPlane(loss),
+                o3d.pipelines.registration.ICPConvergenceCriteria(
+                    max_iteration=iter))
+        elif method == "color":
+            # Colored ICP is sensitive to threshold.
+            # Fallback to preset distance threshold that works better.
+            result_icp = o3d.pipelines.registration.registration_colored_icp(
+                source_down, target_down, voxel_size[i],
+                current_transformation,
+                o3d.pipelines.registration.
+                TransformationEstimationForColoredICP(),
+                o3d.pipelines.registration.ICPConvergenceCriteria(
+                    relative_fitness=1e-6,
+                    relative_rmse=1e-6,
+                    max_iteration=iter))
+        elif method == "generalized":
+            result_icp = o3d.pipelines.registration.registration_generalized_icp(
+                source_down, target_down, distance_threshold,
+                current_transformation,
+                o3d.pipelines.registration.
+                TransformationEstimationForGeneralizedICP(),
+                o3d.pipelines.registration.ICPConvergenceCriteria(
+                    relative_fitness=1e-6,
+                    relative_rmse=1e-6,
+                    max_iteration=iter))
+        current_transformation = result_icp.transformation
+        if i == len(max_iter) - 1:
+            information_matrix = o3d.pipelines.registration.get_information_matrix_from_point_clouds(
+                source_down, target_down, voxel_size[i] * 1.4,
+                result_icp.transformation)
 
-    information_icp = pipelines.registration.get_information_matrix_from_point_clouds(
-        source, target, max_correspondence_distance_fine,
-        transformation_icp)
-
-    return transformation_icp, information_icp
+    return result_icp.transformation, information_matrix
 
 
 def feature_registration(source, target, MIN_MATCH_COUNT=12):

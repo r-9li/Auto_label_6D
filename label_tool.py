@@ -24,12 +24,14 @@ import open3d.visualization.rendering as rendering
 from tqdm import trange
 
 import camera_pose
+from utils import multiscale_icp
+from params import object_icp_voxel_list, object_icp_iter_list, object_icp_method_list
 
 # PARAMETERS.
 ################################################################################
 p = {
     # Folder containing the BOP datasets.
-    'dataset_path': '/media/r/T7 Shield/lm_2',
+    'dataset_path': '/home/r/桌面/lm_1',
 
     # Dataset split. Options: 'train', 'test'.
     'dataset_split': 'test',
@@ -438,23 +440,15 @@ class AppWindow:
         active_obj = objects[self._meshes_used.selected_index]
         source = active_obj.obj_geometry
 
-        trans_init = np.identity(4)
-        threshold = 0.004
-        radius = 0.002
-        target.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=radius * 2, max_nn=30))
-        source.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=radius * 2, max_nn=30))
-        reg = o3d.pipelines.registration.registration_icp(source, target, threshold, trans_init,
-                                                          o3d.pipelines.registration.TransformationEstimationPointToPlane(),
-                                                          o3d.pipelines.registration.ICPConvergenceCriteria(
-                                                              max_iteration=50))
+        trans, _ = multiscale_icp(source, target, object_icp_voxel_list, object_icp_iter_list, object_icp_method_list)
 
-        active_obj.obj_geometry.transform(reg.transformation)
+        active_obj.obj_geometry.transform(trans)
         # active_obj.obj_geometry.paint_uniform_color([0,1,0])  # Debug
         self._scene.scene.remove_geometry(active_obj.obj_name)
         self._scene.scene.add_geometry(active_obj.obj_name, active_obj.obj_geometry,
                                        self.settings.annotation_obj_material,
                                        add_downsampled_copy_for_fast_rendering=True)
-        active_obj.transform = np.matmul(reg.transformation, active_obj.transform)
+        active_obj.transform = np.matmul(trans, active_obj.transform)
 
     def _on_generate(self):
         image_num = self._annotation_scene.image_num
@@ -822,6 +816,9 @@ class AppWindow:
                 depth_img = np.float32(depth_img * depth_scale / 1000)
                 try:
                     geometry = self._make_point_cloud(rgb_img, depth_img, cam_K)  # scene point cloud
+                    if not geometry.has_normals():
+                        geometry.estimate_normals()
+                    geometry.normalize_normals()
                 except Exception:
                     print("Failed to generate scene point cloud.")
 
@@ -880,6 +877,23 @@ class AppWindow:
 
                         if overlap_ratio < 0.05:  # threshold
                             gt_6d_pose_data[str(current_image_index)].remove(obj)
+                        else:  # Pose Refine
+                            source = obj_geometry
+                            target = geometry
+
+                            trans, _ = multiscale_icp(source, target, object_icp_voxel_list, object_icp_iter_list,
+                                                      object_icp_method_list)
+
+                            translation = np.array(np.array(obj['cam_t_m2c']),
+                                                   dtype=np.float64) / 1000  # convert to meter
+                            orientation = np.array(np.array(obj['cam_R_m2c']), dtype=np.float64)
+                            transform = np.concatenate((orientation.reshape((3, 3)), translation.reshape(3, 1)), axis=1)
+                            transform_cam_to_obj = np.concatenate(
+                                (transform, np.array([0, 0, 0, 1]).reshape(1, 4)))  # homogeneous transform
+                            transform_cam_to_obj = np.matmul(trans, transform_cam_to_obj)
+                            translation = list(transform_cam_to_obj[0:3, 3] * 1000)  # convert meter to mm
+                            obj["cam_R_m2c"] = transform_cam_to_obj[0:3, 0:3].tolist()
+                            obj["cam_t_m2c"] = translation
 
                         del obj_geometry, obj_geometry_voxel, obj_geometry_voxel_index, obj_geometry_downsample
                         del crop_geometry, crop_geometry_voxel, crop_geometry_voxel_index, crop_geometry_downsample, crop_geometry_downsample_pcd, crop_geometry_downsample_pcd_tree

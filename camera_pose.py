@@ -15,7 +15,7 @@ import numpy as np
 from open3d import pipelines
 from tqdm import trange
 
-from utils import icp, match_ransac, load_images, load_pcd, feature_registration, make_target_frame_list
+from utils import multiscale_icp, match_ransac, load_images, load_pcd, feature_registration, make_target_frame_list
 from params import max_correspondence_distance_coarse, max_correspondence_distance_fine, VOXEL_SIZE, ICP_METHOD, \
     LABEL_INTERVAL, N_Neighbours
 
@@ -104,9 +104,9 @@ def full_registration(path, max_correspondence_distance_coarse,
                 pcds[target_id] = load_pcd(path, target_id, camera_intrinsics, downsample=True)
             if res is None:
                 # if marker_registration fails, perform pointcloud matching
-                transformation_icp, information_icp = icp(
-                    pcds[source_id], pcds[target_id], VOXEL_SIZE, max_correspondence_distance_coarse,
-                    max_correspondence_distance_fine, method=ICP_METHOD)
+                transformation_icp, information_icp = multiscale_icp(
+                    pcds[source_id], pcds[target_id], [VOXEL_SIZE * 10, VOXEL_SIZE], [90, 90],
+                    ["point_to_plane", "point_to_plane"])
 
             else:
                 transformation_icp = res
