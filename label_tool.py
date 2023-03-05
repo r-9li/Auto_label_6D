@@ -25,7 +25,8 @@ from tqdm import trange
 
 import camera_pose
 from utils import multiscale_icp
-from params import object_icp_voxel_list, object_icp_iter_list, object_icp_method_list
+from params import object_icp_voxel_list, object_icp_iter_list, object_icp_method_list, invisible_detect_voxel_size, \
+    invisible_detect_threshold
 
 # PARAMETERS.
 ################################################################################
@@ -846,7 +847,7 @@ class AppWindow:
                             gt_6d_pose_data[str(current_image_index)].remove(obj)
                             del obj_geometry, crop_geometry
                             continue
-                        voxel_size = 0.003
+                        voxel_size = invisible_detect_voxel_size
                         obj_geometry_voxel = o3d.geometry.VoxelGrid.create_from_point_cloud(input=obj_geometry,
                                                                                             voxel_size=voxel_size)
                         crop_geometry_voxel = o3d.geometry.VoxelGrid.create_from_point_cloud(input=crop_geometry,
@@ -875,7 +876,7 @@ class AppWindow:
                         overlap_ratio = np.mean(
                             distances < voxel_size)  # overlap_ratio=overlap_point/obj_point
 
-                        if overlap_ratio < 0.05:  # threshold
+                        if overlap_ratio < invisible_detect_threshold:  # threshold
                             gt_6d_pose_data[str(current_image_index)].remove(obj)
 
                         del obj_geometry, obj_geometry_voxel, obj_geometry_voxel_index, obj_geometry_downsample

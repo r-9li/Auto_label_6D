@@ -10,3 +10,5 @@ object_icp_voxel_list = [0.004, 0.0033, 0.0027, 0.002, 0.0015, 0.001]
 object_icp_iter_list = [900, 900, 900, 900, 900, 900]
 object_icp_method_list = ["generalized", "generalized", "generalized", "point_to_plane", "point_to_plane",
                           "point_to_plane"]
+invisible_detect_voxel_size = 0.0003
+invisible_detect_threshold = 0.4
