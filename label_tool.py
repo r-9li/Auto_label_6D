@@ -877,23 +877,6 @@ class AppWindow:
 
                         if overlap_ratio < 0.05:  # threshold
                             gt_6d_pose_data[str(current_image_index)].remove(obj)
-                        else:  # Pose Refine
-                            source = obj_geometry
-                            target = geometry
-
-                            trans, _ = multiscale_icp(source, target, object_icp_voxel_list, object_icp_iter_list,
-                                                      object_icp_method_list)
-
-                            translation = np.array(np.array(obj['cam_t_m2c']),
-                                                   dtype=np.float64) / 1000  # convert to meter
-                            orientation = np.array(np.array(obj['cam_R_m2c']), dtype=np.float64)
-                            transform = np.concatenate((orientation.reshape((3, 3)), translation.reshape(3, 1)), axis=1)
-                            transform_cam_to_obj = np.concatenate(
-                                (transform, np.array([0, 0, 0, 1]).reshape(1, 4)))  # homogeneous transform
-                            transform_cam_to_obj = np.matmul(trans, transform_cam_to_obj)
-                            translation = list(transform_cam_to_obj[0:3, 3] * 1000)  # convert meter to mm
-                            obj["cam_R_m2c"] = transform_cam_to_obj[0:3, 0:3].tolist()
-                            obj["cam_t_m2c"] = translation
 
                         del obj_geometry, obj_geometry_voxel, obj_geometry_voxel_index, obj_geometry_downsample
                         del crop_geometry, crop_geometry_voxel, crop_geometry_voxel_index, crop_geometry_downsample, crop_geometry_downsample_pcd, crop_geometry_downsample_pcd_tree
