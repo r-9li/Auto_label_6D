@@ -20,7 +20,7 @@ from params import max_correspondence_distance_coarse, max_correspondence_distan
     LABEL_INTERVAL, N_Neighbours
 
 
-def marker_registration(source, target):
+def marker_registration(source, target, use_SIFT_keypoint):
     cad_src, depth_src = source
     cad_des, depth_des = target
 
@@ -33,7 +33,11 @@ def marker_registration(source, target):
     corners_src, _ids_src, rejectedImgPoints = aruco.detectMarkers(gray_src, aruco_dict, parameters=parameters)
     corners_des, _ids_des, rejectedImgPoints = aruco.detectMarkers(gray_des, aruco_dict, parameters=parameters)
 
-    feature_src_good, feature_dst_good = feature_registration(source, target)
+    if use_SIFT_keypoint:
+        feature_src_good, feature_dst_good = feature_registration(source, target)
+    else:
+        feature_src_good = []
+        feature_dst_good = []
     assert len(feature_src_good) == len(feature_dst_good)
 
     try:
@@ -91,8 +95,12 @@ def full_registration(path, max_correspondence_distance_coarse,
             # derive pairwise registration through feature matching
             color_src, depth_src = load_images(path, source_id, camera_intrinsics)
             color_dst, depth_dst = load_images(path, target_id, camera_intrinsics)
+            if abs(target_id - source_id) <= 18:
+                use_keypoint = True
+            else:
+                use_keypoint = False
             res = marker_registration((color_src, depth_src),
-                                      (color_dst, depth_dst))
+                                      (color_dst, depth_dst), use_keypoint)
 
             if res is None and target_id != source_id + 1:
                 # ignore such connections
