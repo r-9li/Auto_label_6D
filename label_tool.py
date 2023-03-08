@@ -200,11 +200,14 @@ class AppWindow:
         # mesh_used.set_items(["can_0", "can_1", "can_1", "can_1"])
         add_mesh_button = gui.Button("Add Mesh")
         remove_mesh_button = gui.Button("Remove Mesh")
+        clear_mesh_button = gui.Button("Clear Mesh")
         add_mesh_button.set_on_clicked(self._add_mesh)
         remove_mesh_button.set_on_clicked(self._remove_mesh)
+        clear_mesh_button.set_on_clicked(self._clear_mesh)
         annotation_objects.add_child(self._meshes_available)
         annotation_objects.add_child(add_mesh_button)
         annotation_objects.add_child(self._meshes_used)
+        annotation_objects.add_child(clear_mesh_button)
         annotation_objects.add_child(remove_mesh_button)
         self._settings_panel.add_child(annotation_objects)
 
@@ -594,6 +597,17 @@ class AppWindow:
         meshes = [i.obj_name for i in meshes]
         self._meshes_used.set_items(meshes)
         self._meshes_used.selected_index = len(meshes) - 1
+
+    def _clear_mesh(self):
+        if not self._annotation_scene.get_objects():
+            print("There are no object to be cleared.")
+            return
+        meshes = self._annotation_scene.get_objects()
+        active_obj = meshes[self._meshes_used.selected_index]
+        if self._scene.scene.has_geometry(active_obj.obj_name):
+            self._scene.scene.remove_geometry(active_obj.obj_name)  # remove mesh from scene
+        else:
+            self._on_error('Mesh has already been cleared.')
 
     def _remove_mesh(self):
         if not self._annotation_scene.get_objects():
