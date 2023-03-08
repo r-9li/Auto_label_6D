@@ -3,7 +3,7 @@ import os
 
 p = {
     # Folder containing the BOP datasets.
-    'dataset_path': '/media/r/T7 Shield/lm_1',
+    'dataset_path': '/media/r/T7 Shield/converted_model',
 }
 
 models_path = os.path.join(p['dataset_path'], 'models')
