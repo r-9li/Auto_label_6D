@@ -11,9 +11,10 @@ import numpy as np
 import cv2
 from open3d import pipelines
 import png
-from params import VOXEL_SIZE, LABEL_INTERVAL, N_Neighbours
+from params import VOXEL_SIZE, LABEL_INTERVAL, N_Neighbours, invisible_detect_voxel_size, invisible_detect_threshold
 from joblib import Parallel, delayed
 import open3d as o3d
+import json
 
 
 def multiscale_icp(source, target, voxel_size, max_iter, method_list, init_transformation=np.identity(4)):
@@ -381,3 +382,105 @@ def make_target_frame_list(source_id, n_pcds):
     target_frame_list = list(set(target_frame_list))
     target_frame_list.sort()
     return target_frame_list
+
+
+def _make_point_cloud(rgb_img, depth_img, cam_K):
+    # convert images to open3d types
+    rgb_img_o3d = o3d.geometry.Image(cv2.cvtColor(rgb_img, cv2.COLOR_BGR2RGB))
+    depth_img_o3d = o3d.geometry.Image(depth_img)
+
+    # convert image to point cloud
+    intrinsic = o3d.camera.PinholeCameraIntrinsic(rgb_img.shape[0], rgb_img.shape[1],
+                                                  cam_K[0, 0], cam_K[1, 1], cam_K[0, 2], cam_K[1, 2])
+    rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(rgb_img_o3d, depth_img_o3d,
+                                                              depth_scale=1, convert_rgb_to_intensity=False)
+    pcd = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd, intrinsic)
+
+    return pcd
+
+
+def _detect_invisible_object_iter(current_image_index, scene_path, gt_6d_pose_data, objects_path):
+    return_list = []
+    camera_params_path = os.path.join(scene_path, 'scene_camera.json')
+    with open(camera_params_path) as f:
+        data = json.load(f)
+        cam_K = data[str(current_image_index)]['cam_K']
+        cam_K = np.array(cam_K).reshape((3, 3))
+        depth_scale = data[str(current_image_index)]['depth_scale']
+
+    rgb_path = os.path.join(scene_path, 'rgb', f'{current_image_index:06}' + '.png')
+    rgb_img = cv2.imread(rgb_path)
+    depth_path = os.path.join(scene_path, 'depth', f'{current_image_index:06}' + '.png')
+    depth_img = cv2.imread(depth_path, -1)
+    depth_img = np.float32(depth_img * depth_scale / 1000)
+    try:
+        geometry = _make_point_cloud(rgb_img, depth_img, cam_K)  # scene point cloud
+        if not geometry.has_normals():
+            geometry.estimate_normals()
+        geometry.normalize_normals()
+    except Exception:
+        print("Failed to generate scene point cloud.")
+
+    try:
+        scene_data = gt_6d_pose_data[str(current_image_index)]
+        for obj in scene_data:
+            obj_geometry = o3d.io.read_point_cloud(
+                os.path.join(objects_path, 'obj_' + f"{int(obj['obj_id']):06}" + '.ply'))
+            obj_geometry.points = o3d.utility.Vector3dVector(
+                np.array(obj_geometry.points) / 1000)  # convert mm to meter
+
+            translation = np.array(np.array(obj['cam_t_m2c']), dtype=np.float64) / 1000  # convert to meter
+            orientation = np.array(np.array(obj['cam_R_m2c']), dtype=np.float64)
+            transform = np.concatenate((orientation.reshape((3, 3)), translation.reshape(3, 1)), axis=1)
+            transform_cam_to_obj = np.concatenate(
+                (transform, np.array([0, 0, 0, 1]).reshape(1, 4)))  # homogeneous transform
+
+            obj_geometry.transform(transform_cam_to_obj)
+
+            obj_geometry_obb = obj_geometry.get_oriented_bounding_box()
+            crop_geometry = geometry.crop(obj_geometry_obb)
+            if len(crop_geometry.points) == 0:
+                gt_6d_pose_data[str(current_image_index)].remove(obj)
+                del obj_geometry, crop_geometry
+                continue
+            voxel_size = invisible_detect_voxel_size
+            obj_geometry_voxel = o3d.geometry.VoxelGrid.create_from_point_cloud(input=obj_geometry,
+                                                                                voxel_size=voxel_size)
+            crop_geometry_voxel = o3d.geometry.VoxelGrid.create_from_point_cloud(input=crop_geometry,
+                                                                                 voxel_size=voxel_size)
+            obj_geometry_voxel_index = obj_geometry_voxel.get_voxels()
+            crop_geometry_voxel_index = crop_geometry_voxel.get_voxels()
+            obj_geometry_downsample = []
+            for voxel in obj_geometry_voxel_index:
+                obj_geometry_downsample.append(
+                    obj_geometry_voxel.get_voxel_center_coordinate(voxel.grid_index))
+            obj_geometry_downsample = np.array(obj_geometry_downsample)
+            crop_geometry_downsample = []
+            for voxel in crop_geometry_voxel_index:
+                crop_geometry_downsample.append(
+                    crop_geometry_voxel.get_voxel_center_coordinate(voxel.grid_index))
+            crop_geometry_downsample = np.array(crop_geometry_downsample)
+
+            crop_geometry_downsample_pcd = o3d.geometry.PointCloud()
+            crop_geometry_downsample_pcd.points = o3d.utility.Vector3dVector(crop_geometry_downsample)
+            crop_geometry_downsample_pcd_tree = o3d.geometry.KDTreeFlann(crop_geometry_downsample_pcd)
+            distances = []
+            for point in obj_geometry_downsample:
+                _, _, point_dist = crop_geometry_downsample_pcd_tree.search_knn_vector_3d(point, 1)
+                distances.append(point_dist)
+            distances = np.array(distances)
+            overlap_ratio = np.mean(
+                distances < voxel_size)  # overlap_ratio=overlap_point/obj_point
+
+            if overlap_ratio < invisible_detect_threshold:  # threshold
+                return_list.append(0)  # zero means remove
+            else:
+                return_list.append(1)
+
+            del obj_geometry, obj_geometry_voxel, obj_geometry_voxel_index, obj_geometry_downsample
+            del crop_geometry, crop_geometry_voxel, crop_geometry_voxel_index, crop_geometry_downsample, crop_geometry_downsample_pcd, crop_geometry_downsample_pcd_tree
+
+        del geometry
+    except Exception as e:
+        print(e)
+    return current_image_index, return_list

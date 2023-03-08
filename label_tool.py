@@ -15,19 +15,19 @@ import glob
 import json
 import os
 import warnings
+from copy import deepcopy
 
 import cv2
 import numpy as np
 import open3d as o3d
 import open3d.visualization.gui as gui
 import open3d.visualization.rendering as rendering
-from tqdm import trange
 from joblib import Parallel, delayed
+from tqdm import trange
+
 import camera_pose
-from utils import multiscale_icp
-from params import object_icp_voxel_list, object_icp_iter_list, object_icp_method_list, invisible_detect_voxel_size, \
-    invisible_detect_threshold
-from copy import deepcopy
+from params import object_icp_voxel_list, object_icp_iter_list, object_icp_method_list
+from utils import multiscale_icp, _detect_invisible_object_iter
 
 # PARAMETERS.
 ################################################################################
@@ -786,92 +786,6 @@ class AppWindow:
             return False
         return '0' in gt_6d_pose_data.keys()
 
-    def _detect_invisible_object_iter(self, current_image_index, scene_path, gt_6d_pose_data):
-        return_list = []
-        camera_params_path = os.path.join(scene_path, 'scene_camera.json')
-        with open(camera_params_path) as f:
-            data = json.load(f)
-            cam_K = data[str(current_image_index)]['cam_K']
-            cam_K = np.array(cam_K).reshape((3, 3))
-            depth_scale = data[str(current_image_index)]['depth_scale']
-
-        rgb_path = os.path.join(scene_path, 'rgb', f'{current_image_index:06}' + '.png')
-        rgb_img = cv2.imread(rgb_path)
-        depth_path = os.path.join(scene_path, 'depth', f'{current_image_index:06}' + '.png')
-        depth_img = cv2.imread(depth_path, -1)
-        depth_img = np.float32(depth_img * depth_scale / 1000)
-        try:
-            geometry = self._make_point_cloud(rgb_img, depth_img, cam_K)  # scene point cloud
-            if not geometry.has_normals():
-                geometry.estimate_normals()
-            geometry.normalize_normals()
-        except Exception:
-            print("Failed to generate scene point cloud.")
-
-        try:
-            scene_data = gt_6d_pose_data[str(current_image_index)]
-            for obj in scene_data:
-                obj_geometry = o3d.io.read_point_cloud(
-                    os.path.join(self.scenes.objects_path, 'obj_' + f"{int(obj['obj_id']):06}" + '.ply'))
-                obj_geometry.points = o3d.utility.Vector3dVector(
-                    np.array(obj_geometry.points) / 1000)  # convert mm to meter
-
-                translation = np.array(np.array(obj['cam_t_m2c']), dtype=np.float64) / 1000  # convert to meter
-                orientation = np.array(np.array(obj['cam_R_m2c']), dtype=np.float64)
-                transform = np.concatenate((orientation.reshape((3, 3)), translation.reshape(3, 1)), axis=1)
-                transform_cam_to_obj = np.concatenate(
-                    (transform, np.array([0, 0, 0, 1]).reshape(1, 4)))  # homogeneous transform
-
-                obj_geometry.transform(transform_cam_to_obj)
-
-                obj_geometry_obb = obj_geometry.get_oriented_bounding_box()
-                crop_geometry = geometry.crop(obj_geometry_obb)
-                if len(crop_geometry.points) == 0:
-                    gt_6d_pose_data[str(current_image_index)].remove(obj)
-                    del obj_geometry, crop_geometry
-                    continue
-                voxel_size = invisible_detect_voxel_size
-                obj_geometry_voxel = o3d.geometry.VoxelGrid.create_from_point_cloud(input=obj_geometry,
-                                                                                    voxel_size=voxel_size)
-                crop_geometry_voxel = o3d.geometry.VoxelGrid.create_from_point_cloud(input=crop_geometry,
-                                                                                     voxel_size=voxel_size)
-                obj_geometry_voxel_index = obj_geometry_voxel.get_voxels()
-                crop_geometry_voxel_index = crop_geometry_voxel.get_voxels()
-                obj_geometry_downsample = []
-                for voxel in obj_geometry_voxel_index:
-                    obj_geometry_downsample.append(
-                        obj_geometry_voxel.get_voxel_center_coordinate(voxel.grid_index))
-                obj_geometry_downsample = np.array(obj_geometry_downsample)
-                crop_geometry_downsample = []
-                for voxel in crop_geometry_voxel_index:
-                    crop_geometry_downsample.append(
-                        crop_geometry_voxel.get_voxel_center_coordinate(voxel.grid_index))
-                crop_geometry_downsample = np.array(crop_geometry_downsample)
-
-                crop_geometry_downsample_pcd = o3d.geometry.PointCloud()
-                crop_geometry_downsample_pcd.points = o3d.utility.Vector3dVector(crop_geometry_downsample)
-                crop_geometry_downsample_pcd_tree = o3d.geometry.KDTreeFlann(crop_geometry_downsample_pcd)
-                distances = []
-                for point in obj_geometry_downsample:
-                    _, _, point_dist = crop_geometry_downsample_pcd_tree.search_knn_vector_3d(point, 1)
-                    distances.append(point_dist)
-                distances = np.array(distances)
-                overlap_ratio = np.mean(
-                    distances < voxel_size)  # overlap_ratio=overlap_point/obj_point
-
-                if overlap_ratio < invisible_detect_threshold:  # threshold
-                    return_list.append(0)  # zero means remove
-                else:
-                    return_list.append(1)
-
-                del obj_geometry, obj_geometry_voxel, obj_geometry_voxel_index, obj_geometry_downsample
-                del crop_geometry, crop_geometry_voxel, crop_geometry_voxel_index, crop_geometry_downsample, crop_geometry_downsample_pcd, crop_geometry_downsample_pcd_tree
-
-            del geometry
-        except Exception as e:
-            print(e)
-        return current_image_index, return_list
-
     def _detect_invisible_object(self):
         json_6d_path = os.path.join(self.scenes.scenes_path, f"{self._annotation_scene.scene_num:06}",
                                     "scene_gt.json")
@@ -885,7 +799,8 @@ class AppWindow:
             os.walk(os.path.join(self.scenes.scenes_path, f'{self._annotation_scene.scene_num:06}', 'depth')))[
                       2])
         results = Parallel(n_jobs=-1)(
-            delayed(self._detect_invisible_object_iter)(i, scene_path, gt_6d_pose_data) for i in trange(num))
+            delayed(_detect_invisible_object_iter)(i, scene_path, gt_6d_pose_data, self.scenes.objects_path) for i in
+            trange(num))
         for result in results:
             for i in range(len(result[1]) - 1, -1, -1):
                 if result[1][i] == 0:
