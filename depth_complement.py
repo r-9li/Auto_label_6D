@@ -314,10 +314,10 @@ def fill_missing(dpt, cam_scale, scale_2_80m, fill_type='multiscale',
 
 p = {
     # Folder containing the BOP datasets.
-    'dataset_path': '/media/r/T7 Shield/lm_1',
+    'dataset_path': '/media/r/T7 Shield/Auto_label_6D-master/Dataset',
 
     # Dataset split. Options: 'train', 'test'.
-    'dataset_split': 'test',
+    'dataset_split': 'train',
 
     # Dataset split type. Options: 'synt', 'real', None = default. See dataset_params.py for options.
     'dataset_split_type': None,

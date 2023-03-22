@@ -34,10 +34,10 @@ from utils import multiscale_icp, _detect_invisible_object_iter
 ################################################################################
 p = {
     # Folder containing the BOP datasets.
-    'dataset_path': '/home/r/桌面/lm_1',
+    'dataset_path': '/media/r/T7 Shield/Auto_label_6D-master/Dataset',
 
     # Dataset split. Options: 'train', 'test'.
-    'dataset_split': 'test',
+    'dataset_split': 'train',
 
     # Dataset split type. Options: 'synt', 'real', None = default. See dataset_params.py for options.
     'dataset_split_type': None,
