@@ -15,6 +15,67 @@ from params import VOXEL_SIZE, LABEL_INTERVAL, N_Neighbours, invisible_detect_vo
 from joblib import Parallel, delayed
 import open3d as o3d
 import json
+import cv2
+import cv2.aruco as aruco
+
+
+def marker_registration(source, target, use_SIFT_keypoint):
+    cad_src, depth_src = source
+    cad_des, depth_des = target
+
+    gray_src = cv2.cvtColor(cad_src, cv2.COLOR_RGB2GRAY)
+    gray_des = cv2.cvtColor(cad_des, cv2.COLOR_RGB2GRAY)
+    aruco_dict = aruco.Dictionary_get(aruco.DICT_6X6_250)
+    parameters = aruco.DetectorParameters_create()
+
+    # lists of ids and the corners beloning to each id
+    corners_src, _ids_src, rejectedImgPoints = aruco.detectMarkers(gray_src, aruco_dict, parameters=parameters)
+    corners_des, _ids_des, rejectedImgPoints = aruco.detectMarkers(gray_des, aruco_dict, parameters=parameters)
+
+    if use_SIFT_keypoint:
+        feature_src_good, feature_dst_good = feature_registration(source, target)
+    else:
+        feature_src_good = []
+        feature_dst_good = []
+    assert len(feature_src_good) == len(feature_dst_good)
+
+    try:
+        ids_src = []
+        ids_des = []
+        for i in range(len(_ids_src)):
+            ids_src.append(_ids_src[i][0])
+        for i in range(len(_ids_des)):
+            ids_des.append(_ids_des[i][0])
+    except:
+        return None
+
+    common = [x for x in ids_src if x in ids_des]
+
+    if (len(common) + len(feature_src_good)) < 12:
+        # too few marker matches, use icp instead
+        return None
+
+    src_good = []
+    dst_good = []
+    for i, id in enumerate(ids_des):
+        if id in ids_src:
+            j = ids_src.index(id)
+            for count, corner in enumerate(corners_src[j][0]):
+                feature_3D_src = depth_src[int(corner[1])][int(corner[0])]
+                feature_3D_des = depth_des[int(corners_des[i][0][count][1])][int(corners_des[i][0][count][0])]
+                if feature_3D_src[2] != 0 and feature_3D_des[2] != 0:
+                    src_good.append(feature_3D_src)
+                    dst_good.append(feature_3D_des)
+
+    src_good += feature_src_good
+    dst_good += feature_dst_good
+
+    # get rigid transforms between 2 set of feature points through ransac
+    try:
+        transform = match_ransac(np.asarray(src_good), np.asarray(dst_good))
+        return transform
+    except:
+        return None
 
 
 def multiscale_icp(source, target, voxel_size, max_iter, method_list, init_transformation=np.identity(4)):
@@ -343,7 +404,7 @@ def load_images(path, ID, camera_intrinsics, ):
     depth = np.array(tuple(map(np.uint16, pngdata[2])))
     pointcloud = convert_depth_frame_to_pointcloud(depth, camera_intrinsics)
 
-    return (cad, pointcloud)
+    return cad, pointcloud, depth
 
 
 def load_pcd(path, Filename, camera_intrinsics, downsample=True, interval=1):
@@ -377,10 +438,6 @@ def load_pcd(path, Filename, camera_intrinsics, downsample=True, interval=1):
 
 def make_target_frame_list(source_id, n_pcds):
     target_frame_list = list(range(source_id + 1, n_pcds, max(1, int(n_pcds / N_Neighbours))))
-    for i in range(N_Neighbours):
-        target_frame_list.append(min(n_pcds - 1, source_id + 3 * i))
-    target_frame_list = list(set(target_frame_list))
-    target_frame_list.sort()
     return target_frame_list
 
 
