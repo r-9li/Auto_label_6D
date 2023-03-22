@@ -22,8 +22,8 @@ class BA_param:
 
     descriptor_matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
     matching_distance = 30
-    matching_cell_size = 12  # pixels
-    matching_neighborhood = 2
+    matching_cell_size = 6  # pixels
+    matching_neighborhood = 1
 
     local_window_size = 15
     ba_max_iterations = 90

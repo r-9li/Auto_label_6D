@@ -11,6 +11,7 @@ original repo: https://github.com/FLW-TUDO/3d_annotation_tool
 
 """
 
+import argparse
 import glob
 import json
 import os
@@ -49,7 +50,11 @@ p = {
 
 }
 ################################################################################
+parser = argparse.ArgumentParser()
+parser.add_argument('--continuous', action='store_true', help='continuous labeling mode')
+parser.add_argument('--scene-num', type=int, help='scene number')
 
+args = parser.parse_args()
 dist = 0.002
 deg = 1
 
@@ -316,6 +321,12 @@ class AppWindow:
         self._scene.set_on_key(self._transform)
 
         self._left_shift_modifier = False
+
+        if args.continuous:
+            self.scene_load(self.scenes.scenes_path, args.scene_num, 0)
+            self.update_obj_list()
+            self._auto_label()
+            os._exit(0)
 
     def _jump_to_scene(self):
         if self._check_changes():
