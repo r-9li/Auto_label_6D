@@ -611,7 +611,7 @@ class AppWindow:
 
     def _show_or_hide_mesh(self):
         if not self._annotation_scene.get_objects():
-            print("There are no object to be cleared.")
+            print("There are no object to be chosen.")
             return
         meshes = self._annotation_scene.get_objects()
         active_obj = meshes[self._meshes_used.selected_index]
