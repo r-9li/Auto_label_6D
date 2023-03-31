@@ -12,8 +12,8 @@ object_icp_voxel_list = [0.004, 0.0033, 0.0027, 0.002, 0.0015, 0.001]
 object_icp_iter_list = [900, 900, 900, 900, 900, 900]
 object_icp_method_list = ["generalized", "generalized", "generalized", "point_to_plane", "point_to_plane",
                           "point_to_plane"]
-invisible_detect_voxel_size = 0.0003
-invisible_detect_threshold = 0.4
+invisible_detect_voxel_size = 0.0009
+invisible_detect_threshold = 0.51
 
 
 class BA_param:
@@ -43,4 +43,4 @@ class BA_param:
     cam_height = 480
     cam_scale = 1000  # TODO The depth_scale used here is defined like this: depth / depth_scale=meter, but it is
     # TODO defined like this elsewhere: depth*depth_scale=meter(mm).
-    use_BA = True
+    use_BA = False
