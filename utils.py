@@ -504,7 +504,7 @@ def _detect_invisible_object_iter(current_image_index, scene_path, gt_6d_pose_da
             obj_geometry_obb = obj_geometry.get_oriented_bounding_box()
             crop_geometry = geometry.crop(obj_geometry_obb)
             if len(crop_geometry.points) == 0:
-                gt_6d_pose_data[str(current_image_index)].remove(obj)
+                return_list.append(0)
                 del obj_geometry, crop_geometry
                 continue
             voxel_size = invisible_detect_voxel_size
