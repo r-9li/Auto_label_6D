@@ -14,7 +14,7 @@ from open3d import pipelines
 from tqdm import trange
 
 from Camera_Track import Camera_Track
-from params import max_correspondence_distance_fine, LABEL_INTERVAL
+from params import max_correspondence_distance_fine, LABEL_INTERVAL, N_Neighbours
 from updatable_pose_graph import PoseGraph
 from utils import load_images, load_pcd, make_target_frame_list
 from utils import marker_registration
@@ -46,8 +46,12 @@ def full_registration(path, max_correspondence_distance_fine, camera_intrinsics,
                 camera_track.track(target_id, color_dst, depth_dst_cloudify, depth_dst, pcds[target_id])
 
             else:  # loop closure
+                if abs(target_id - source_id) <= N_Neighbours:
+                    use_keypoint = True
+                else:
+                    use_keypoint = False
                 res = marker_registration((color_src, depth_src_cloudify),
-                                          (color_dst, depth_dst_cloudify), use_SIFT_keypoint=False)
+                                          (color_dst, depth_dst_cloudify), use_SIFT_keypoint=use_keypoint)
                 if res is None:
                     # ignore such connections
                     continue
